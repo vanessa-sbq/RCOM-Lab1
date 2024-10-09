@@ -30,7 +30,9 @@
 #define BCC1_RECEIVE (ADDRESS ^ CONTROL_SET)
 #define BCC1_SEND (ADDRESS ^ CONTROL_UA)
 
-volatile int STOP = FALSE;
+typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP} state_t;
+
+//volatile int STOP = FALSE;
 
 int main(int argc, char *argv[])
 {
@@ -97,9 +99,44 @@ int main(int argc, char *argv[])
 
     printf("New termios structure set\n");
 
+    /*
     // Loop for input
     unsigned char buf[BUF_SIZE + 1] = {0}; // +1: Save space for the final '\0' char
+    */
 
+    state_t state = START;
+
+    while (state != STOP){
+
+        unsigned char byte = 0;
+        read(fd, &byte, 1); // FIXME: can fail
+
+        switch (state) {
+            case START:
+                state = byte == FLAG ? FLAG_RCV : START;
+                break;
+            case FLAG_RCV:
+                state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS ? A_RCV : START);
+                break;
+            case A_RCV:
+                state = byte == FLAG ? FLAG_RCV : (byte == CONTROL_SET ? C_RCV : START);
+                break;
+            case C_RCV:
+                unsigned char BCC1 = ADDRESS ^ CONTROL_SET;
+                state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
+                break;
+            case BCC_OK:
+                state = byte == FLAG ? STOP : START;
+                break;
+            case STOP:
+                break;
+        }
+    }
+
+    unsigned char ua_array[BUF_SIZE] = {FLAG, ADDRESS, CONTROL_UA, BCC1_SEND, FLAG};
+	write(fd, ua_array, BUF_SIZE);
+
+    /*
     while (STOP == FALSE)
     {
         // Returns after 5 chars have been input
@@ -121,8 +158,8 @@ int main(int argc, char *argv[])
 	write(fd, ua_array, BUF_SIZE);
     }
 
-    // The while() cycle should be changed in order to respect the specifications
-    // of the protocol indicated in the Lab guide
+    */
+
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)

@@ -122,56 +122,61 @@ int main(int argc, char *argv[])
     (void)signal(SIGALRM, alarmHandler);
 
     while (alarmCount < 4) {
-        if (alarmEnabled == FALSE){
-            alarm(3); // Set alarm to be triggered in 3s
-            alarmEnabled = TRUE;
+            if (alarmEnabled == FALSE){
+                alarm(3); // Set alarm to be triggered in 3s
+                alarmEnabled = TRUE;
 
-            // Send SET byte
-            unsigned char set_array[BUF_SIZE] = {FLAG, ADDRESS_SEND, CONTROL_SET, BCC1_SEND, FLAG};
-            
-            int set = write(fd, set_array, BUF_SIZE);
-            printf("%d set bytes written\n", set);
+                unsigned char BCC1 = ADDRESS_SEND ^ CONTROL_SET;
 
-            // Wait until all bytes have been written to the serial port
-            sleep(1);
-        }
+                // Send SET byte
+                int array_size = 5;
+                unsigned char set_array[5] = {FLAG, ADDRESS_SEND, CONTROL_SET, BCC1, FLAG};
 
-        unsigned char buf[BUF_SIZE] = {0};
+                int bytesWritten = 0;
 
-        if (STOP == FALSE){
-            printf("Em cima do read\n");
-            read(fd, buf, BUF_SIZE);
-            printf("Em baixo do read\n");
-            //buf[bytes] = '\0';
-            for (int i = 0; i < 5; i++){
-                printf("var = 0x%02X\n", buf[i]);
+                while (bytesWritten != 5) {
+                    bytesWritten = writeBytes((set_array + sizeof(unsigned char) * bytesWritten), array_size - bytesWritten);
+
+                    if (bytesWritten == -1) {
+                        return -1;
+                    }
+                }
+                sleep(1); // Wait until all bytes have been written to the serial port
             }
 
-            //printf(":%s:%d\n", buf, bytes);
-            if (buf[0] == FLAG) {
-                STOP = TRUE;
-                printf("Stop == true\n");
+            unsigned char buf[5] = {0};
+
+            int bufi = 0;
+            while (bufi != 5) {
+                int bytesRead = readByte( &buf[bufi] );
+
+                switch (bytesRead) {
+                    case -1:
+                        return -1; // FIXME: Should return?
+                        break;
+                    case 0:
+                        break;
+                    default:
+                        printf("var = 0x%02X\n", buf[bufi]); // FIXME: Debug
+                        bufi++;
+                        break;              
+                }
+
+                
             }
-            else {
-                printf("Stop == false\n");
+
+            int BCC1 = ADDRESS_SEND ^ CONTROL_UA;
+
+            if (buf[0] == FLAG && buf[1] == ADDRESS_SEND && buf[2] == CONTROL_UA && buf[3] == BCC1 && buf[4] == FLAG){
+                printf("Success!\n");
+                break;
+            } else {
+                printf("Unsuccessful\n");
             }
-        }
 
-        for (int i = 0; i < 5; i++){
-            printf("var = 0x%02X\n", buf[i]);
-        }
-
-        if (buf[0] == FLAG && buf[1] == ADDRESS_SEND && buf[2] == CONTROL_UA && buf[3] == BCC1_RECEIVE && buf[4] == FLAG){
-            printf("Success!\n");
-            break;
-        }
-        else {
-            printf("Unsuccessful\n");
-        }
-
-        printf("alarm count: %d\n", alarmCount);
+            printf("alarm count: %d\n", alarmCount);
         
-    }
+        }
 
     // Restore the old port settings
     if (tcsetattr(fd, TCSANOW, &oldtio) == -1)
