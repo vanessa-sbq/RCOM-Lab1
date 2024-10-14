@@ -6,7 +6,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <signal.h>
-#include <stdio.h>
+#include <stdlib.h>
 
 // MISC
 #define _POSIX_SOURCE 1 // POSIX compliant source
@@ -33,9 +33,11 @@ volatile int STOP = FALSE;
 #define CONTROL_REJ1 0x55
 #define CONTROL_DISC 0x0B
 
-// Reader State Machine
-typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_STATE} state_t;
+#define ESCAPE_OCTET 0x7D
+#define ESCAPE_XOR 0x20
 
+// Reader State Machine && Acknowledgement State Machine
+typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_STATE} state_t;
 
 // Serial Port (File Descriptor)
 static int fd;
@@ -62,7 +64,7 @@ int llopen(LinkLayer connectionParameters) {
         return -1;
     }
 
-    if (connectionParameters.role == LlTx) {
+    if (connectionParameters.role == LlTx) { // Transmitter
         while (alarmCount < 4) {
             if (alarmEnabled == FALSE){
                 alarm(3); // Set alarm to be triggered in 3s
@@ -72,12 +74,12 @@ int llopen(LinkLayer connectionParameters) {
 
                 // Send SET byte
                 int array_size = 5;
-                unsigned char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
+                char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
 
                 int bytesWritten = 0;
 
                 while (bytesWritten != 5) {
-                    bytesWritten = writeBytes((set_array + sizeof(unsigned char) * bytesWritten), array_size - bytesWritten);
+                    bytesWritten = writeBytes((set_array + sizeof(char) * bytesWritten), array_size - bytesWritten);
 
                     if (bytesWritten == -1) {
                         return -1;
@@ -86,12 +88,11 @@ int llopen(LinkLayer connectionParameters) {
                 sleep(1); // Wait until all bytes have been written to the serial port
             }
 
-            unsigned char buf[5] = {0};
+            char buf[5] = {0};
 
             int bufi = 0;
             while (bufi != 5) {
                 int bytesRead = readByte( &buf[bufi] );
-
                 switch (bytesRead) {
                     case -1:
                         return -1; // FIXME: Should return?
@@ -102,9 +103,7 @@ int llopen(LinkLayer connectionParameters) {
                         printf("var = 0x%02X\n", buf[bufi]); // FIXME: Debug
                         bufi++;
                         break;              
-                }
-
-                
+                } 
             }
 
             int BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_UA;
@@ -122,11 +121,9 @@ int llopen(LinkLayer connectionParameters) {
 
     } else { // Receiver
         state_t state = START;
-
         while (state != STOP_STATE) {
             unsigned char byte = 0;
             read(fd, &byte, 1); // FIXME: can fail
-
             switch (state) {
                 case START:
                     state = byte == FLAG ? FLAG_RCV : START;
@@ -160,8 +157,147 @@ int llopen(LinkLayer connectionParameters) {
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
+static int controlType = FALSE;
+
+
+// If it returns a negative value then an error occoured.
+// If it returns 0 then no errors occoured.
+int readAck() {
+    state_t state = START;
+    unsigned char BCC1 = 0x00;
+    unsigned char amountOfBytesReceived = 0;
+    
+    int retValue = 0;
+
+    while (state != STOP_STATE) {
+        retValue = 0;
+
+        if (amountOfBytesReceived >= (5 * numberOfRetransmitions)) { // More than 5 bytes were received, which is not expected.
+            return -1;
+        }
+
+        char byte = 0;
+        
+        int readRet = readByte(&byte);
+
+        if (readRet <= 0) {
+            return -1; // No byte was read or an error occoured while trying to read the byte.
+        } else {
+            amountOfBytesReceived++; // Increment the byte counter.
+        }
+
+        switch (state) {
+            case START:
+                state = byte == FLAG ? FLAG_RCV : START;
+                break;
+            case FLAG_RCV:
+                state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
+                break;
+            case A_RCV:
+                switch (byte) {
+                    case CONTROL_RR0:
+                        state = C_RCV;
+                        controlType = FALSE;
+                        break;
+                    case CONTROL_RR1:
+                        state = C_RCV;
+                        controlType = TRUE;
+                        break;
+                    case CONTROL_REJ0:
+                        retValue = -1; // Error case. Try to retransmit again.
+                        state = C_RCV;
+                        break;
+                    case CONTROL_REJ1:
+                        retValue = -1; // Error case.
+                        state = C_RCV;
+                        break;
+                    case FLAG:
+                        state = FLAG_RCV; 
+                        break;                    
+                    default:
+                        state = START;
+                        break;
+                }
+
+                BCC1 = ADDRESS_SENT_BY_TX ^ byte;
+                break;
+            case C_RCV:
+                state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
+                break;
+            case BCC_OK:
+                state = byte == FLAG ? STOP_STATE : START;
+                break;
+            case STOP_STATE:
+                break;
+        }
+    }
+
+    return retValue;
+}
+
 int llwrite(const unsigned char *buf, int bufSize) {
+
+    if (bufSize < 0 || buf == NULL) {
+        return -1;    
+    }
+
+    int newFrameSize = bufSize + 6;
+    for (int i = 0; i < bufSize; i++) { // Get the new frame size for byte stuffing
+        if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET) newFrameSize++;
+    }
+
+    unsigned char* frame = (unsigned char*)malloc(sizeof(unsigned char) * (newFrameSize));
+
+    frame[0] = FLAG; 
+    frame[1] = ADDRESS_SENT_BY_TX;
+
+    if (!controlType) {
+        frame[2] = 0x00;
+    } else {
+        frame[2] = 0x80;
+    }
+
+    
+    frame[3] = frame[1] ^ frame[2];
+
+    int j = 0;
+    for (int i = 0; i < bufSize; i++) {
+        if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET){
+            frame[4 + j] = ESCAPE_OCTET;
+            j++;
+            frame[4 + j] = buf[i] ^ ESCAPE_XOR; // DO THE XOR
+        } else {
+            frame[4+j] = buf[i];
+        }
+        j++;
+    }
+
+
+    printf("\n DEBUG: Now doing byte stuffing part. -> Before: "); // TODO: Remove
+    for (int i = 0; i < bufSize; i++) {
+        printf("%x ", buf[i]);
+    }
+
+
+    printf("\n After Byte Stuffing: "); // TODO: Remove
+    for (int i = 0; i < newFrameSize; i++) {
+        printf("%x ", frame[i]);
+    }
+
+    printf("\n");   // TODO: Remove
+
+
+    unsigned char BCC2 = buf[0];
+
+    for (int j = 1; j < bufSize; j++) {
+        BCC2 ^= buf[j]; 
+    }
+
+    frame[newFrameSize - 2] = BCC2;
+    frame[newFrameSize - 1] = FLAG;
+
     int retransmitionCounter = 0;
+    int writeRet = 0;
 
     while (retransmitionCounter <= numberOfRetransmitions) {  // TODO: Change condition
 
@@ -169,24 +305,31 @@ int llwrite(const unsigned char *buf, int bufSize) {
                 alarm(3); // Set alarm to be triggered in 3s
                 alarmEnabled = TRUE;
                 
-                int writeRet = write(fd, buf, bufSize);
+                writeRet = write(fd, frame, newFrameSize);
                 
-                if (writeRet < 0) {
+                if (writeRet < 0 || writeRet < newFrameSize) {
                     retransmitionCounter++;
                     continue;
                 }
+
+                /*
+                if (writeRet < bufSizeModified) {
+                    bufSizeModified = bufSize - bufSizeModified;
+                }
+                */
                 
-                if (writeRet == bufSize) {
+                if (writeRet == newFrameSize) {
                     break;
                 }
 
-                //////////////////////////////////////////////rgoiwruhpiuhpguhepoiughwpghpriughwrpihgoireuhgoireuhgoiurehgoiurehgoirehgoirehgorhgoirehgoireuhif ()
-
-            }
-
+        }
+        sleep(1); // Guarantee that all bytes were written.
+        readAck();
     }
 
-    return 0;
+    
+
+    return writeRet;
 }
 
 ////////////////////////////////////////////////
