@@ -50,7 +50,6 @@ int alarmCount = 0;
 void alarmHandler(int signal) {
     alarmEnabled = FALSE;
     alarmCount++;
-
     printf("Alarm #%d\n", alarmCount);
 }
 
@@ -65,22 +64,20 @@ int llopen(LinkLayer connectionParameters) {
     }
 
     if (connectionParameters.role == LlTx) { // Transmitter
-        while (alarmCount < 4) {
+        while (alarmCount < numberOfRetransmitions) {
             if (alarmEnabled == FALSE){
-                alarm(3); // Set alarm to be triggered in 3s
+                alarm(connectionParameters.timeout); // Set alarm to be triggered after timeout
                 alarmEnabled = TRUE;
 
-                unsigned char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
-
-                // Send SET byte
+                // Assemble SET frame
                 int array_size = 5;
+                unsigned char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
                 char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
 
+                // Send SET frame
                 int bytesWritten = 0;
-
-                while (bytesWritten != 5) {
+                while (bytesWritten != 5) { // FIXME: Remove hard-coded value?
                     bytesWritten = writeBytes((set_array + sizeof(char) * bytesWritten), array_size - bytesWritten);
-
                     if (bytesWritten == -1) {
                         return -1;
                     }
@@ -88,8 +85,8 @@ int llopen(LinkLayer connectionParameters) {
                 sleep(1); // Wait until all bytes have been written to the serial port
             }
 
+            // Receive UA frame
             char buf[5] = {0};
-
             int bufi = 0;
             while (bufi != 5) {
                 int bytesRead = readByte( &buf[bufi] );
@@ -106,27 +103,24 @@ int llopen(LinkLayer connectionParameters) {
                 } 
             }
 
+            // FIXME: Should be a state machine
             int BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_UA;
-
             if (buf[0] == FLAG && buf[1] == ADDRESS_SENT_BY_TX && buf[2] == CONTROL_UA && buf[3] == BCC1 && buf[4] == FLAG){
                 printf("Success!\n");
                 break;
             } else {
                 printf("Unsuccessful\n");
             }
-
             printf("alarm count: %d\n", alarmCount);
-        
         }
-
-    } else { // Receiver
+    } else if (connectionParameters.role == LlRx) { // Receiver
         state_t state = START;
         while (state != STOP_STATE) {
             unsigned char byte = 0;
-            read(fd, &byte, 1); // FIXME: can fail
+            read(fd, &byte, 1); // FIXME: can fail (maybe use an if?)
             switch (state) {
                 case START:
-                    state = byte == FLAG ? FLAG_RCV : START;
+                    if (state == FLAG) state = FLAG_RCV;
                     break;
                 case FLAG_RCV:
                     state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
@@ -148,7 +142,7 @@ int llopen(LinkLayer connectionParameters) {
 
         int BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_UA;
         unsigned char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_UA, BCC1, FLAG};
-        write(fd, ua_array, 5);
+        write(fd, ua_array, 5); // FIXME: can fail
     }
 
     return 0;
@@ -158,7 +152,6 @@ int llopen(LinkLayer connectionParameters) {
 // LLWRITE
 ////////////////////////////////////////////////
 static int controlType = FALSE;
-
 
 // If it returns a negative value then an error occoured.
 // If it returns 0 then no errors occoured.
@@ -236,7 +229,6 @@ int readAck() {
 }
 
 int llwrite(const unsigned char *buf, int bufSize) {
-
     if (bufSize < 0 || buf == NULL) {
         return -1;    
     }
@@ -272,12 +264,10 @@ int llwrite(const unsigned char *buf, int bufSize) {
         j++;
     }
 
-
     printf("\n DEBUG: Now doing byte stuffing part. -> Before: "); // TODO: Remove
     for (int i = 0; i < bufSize; i++) {
         printf("%x ", buf[i]);
     }
-
 
     printf("\n After Byte Stuffing: "); // TODO: Remove
     for (int i = 0; i < newFrameSize; i++) {
@@ -285,7 +275,6 @@ int llwrite(const unsigned char *buf, int bufSize) {
     }
 
     printf("\n");   // TODO: Remove
-
 
     unsigned char BCC2 = buf[0];
 
@@ -302,32 +291,29 @@ int llwrite(const unsigned char *buf, int bufSize) {
     while (retransmitionCounter <= numberOfRetransmitions) {  // TODO: Change condition
 
         if (alarmEnabled == FALSE){
-                alarm(3); // Set alarm to be triggered in 3s
-                alarmEnabled = TRUE;
-                
-                writeRet = write(fd, frame, newFrameSize);
-                
-                if (writeRet < 0 || writeRet < newFrameSize) {
-                    retransmitionCounter++;
-                    continue;
-                }
+            alarm(3); // Set alarm to be triggered in 3s
+            alarmEnabled = TRUE;
+            
+            writeRet = write(fd, frame, newFrameSize);
+            
+            if (writeRet < 0 || writeRet < newFrameSize) {
+                retransmitionCounter++;
+                continue;
+            }
 
-                /*
-                if (writeRet < bufSizeModified) {
-                    bufSizeModified = bufSize - bufSizeModified;
-                }
-                */
-                
-                if (writeRet == newFrameSize) {
-                    break;
-                }
-
+            /*
+            if (writeRet < bufSizeModified) {
+                bufSizeModified = bufSize - bufSizeModified;
+            }
+            */
+            
+            if (writeRet == newFrameSize) {
+                break;
+            }
         }
         sleep(1); // Guarantee that all bytes were written.
         readAck();
     }
-
-    
 
     return writeRet;
 }
