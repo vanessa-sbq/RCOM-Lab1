@@ -41,7 +41,7 @@ volatile int STOP = FALSE;
 #define ESCAPE_XOR 0x20
 
 // Reader State Machine && Acknowledgement State Machine
-typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_STATE} state_t;
+typedef enum {START, FLAG_RCV, A_RCV, C_RCV, BCC_OK, STOP_STATE, CHECK_DATA} state_t;
 
 // Serial Port (File Descriptor)
 static int fd;
@@ -348,9 +348,11 @@ int llread(unsigned char *packet) {
             case BCC_OK:
                 dataFrame[currentDataFrameIt] = byte;
                 currentDataFrameIt++;
-                realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(char));
+                realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(char))
 
-                if (byte == FLAG) state = STOP_STATE;
+                if (dataFrame == NULL || currentDataFrameIt + 1 > MAX_PAYLOAD_SIZE) return -1;
+
+                if (byte == FLAG) state = CHECK_DATA;
                 // gets first byte...
                 // gets next byte ...
                 // gets n byte ...
@@ -358,11 +360,80 @@ int llread(unsigned char *packet) {
                 // when byte is equal to flag -> Stop.
         }
 
+    
+        if (state == CHECK_DATA) {
+            int data_bcc2_flag_size = currentDataFrameIt;
+
+            char* actualData = (char*)malloc(sizeof(char));
+            int actualDataIt = 0;
+            int sizeOfActualData = 1;
+
+            int expectDestuffing = FALSE;
+            for (int i = 0; i < (data_bcc2_flag_size - 2); i++) { // Byte destuffing
+
+                if (expectDestuffing) {
+
+                    if ((dataFrame[i] ^ ESCAPE_XOR == ESCAPE_OCTET) || (dataFrame[i] ^ ESCAPE_XOR == FLAG)) { // Then we are really suppost to do destuffing
+                        actualData[actualDataIt] = dataFrame[i] ^ ESCAPE_XOR;
+                    } else {
+                        // TODO: REMOVE
+                        printf("else case\n");
+
+                        // Add previous byte... our expectations were not correct
+                        actualData[actualDataIt] = ESCAPE_OCTET;
+                        actualDataIt++;
+                        sizeOfActualData++;
+                        realloc(actualData, sizeOfActualData * sizeof(char));
+                        if (actualData == NULL) return -1;
+
+                        // Add current byte
+                        actualData[actualDataIt] = dataFrame[i];
+                    }
+
+                    actualDataIt++;
+                    sizeOfActualData++;
+                    realloc(actualData, sizeOfActualData * sizeof(char));
+                    if (actualData == NULL) return -1;
+                    expectDestuffing = FALSE;
+                    continue;
+                }
+                
+                if (dataFrame[i] == ESCAPE_OCTET) {
+                    expectDestuffing = TRUE;
+                    continue;
+                } else {
+                    actualData[actualDataIt] = dataFrame[i];
+                    actualDataIt++;
+                    sizeOfActualData++;
+                    realloc(actualData, sizeOfActualData * sizeof(char));
+                    if (actualData == NULL) return -1;
+                }
+            }
+
+            // Check BCC2
+            char dataAccm = 0x00;
+
+            for (int i = 0; i < sizeOfActualData; i++) {
+                dataAccm ^= actualData[i];  // EXOR all the destuffed data bytes
+            }
+
+            if (dataAccm != dataFrame[data_bcc2_flag_size - 2]) { // If dataAccm is not the same as BCC2, something went wrong
+                // Oh no :(
+                // Data is not valid :(((((((((((((((
+
+
+                // SEND NACK
+
+                state = START;
+
+                // TODO: Clean allocated space ?
+            } else {
+                packet = 
+                state = STOP_STATE;
+            }
+        }
     }
-
-    // TODO: Byte destuffing
-
-    // TODO: Check BCC2
+    // SEND ACK
 
     return 0;
 }
