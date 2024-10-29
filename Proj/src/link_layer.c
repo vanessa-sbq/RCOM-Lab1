@@ -67,7 +67,7 @@ void alarmHandler(int signal) {
 int checkSUFrame(char controlField, int* ringringEnabled){
     state_t state = START;
     while (state != STOP_STATE && (*ringringEnabled)) {
-        printf("DA BLUETOOS DEVICE IS LEADY TO PAIL\n");
+        //printf("DA BLUETOOS DEVICE IS LEADY TO PAIL\n"); // TODO: Remove (DEBUG)
         char byte = 0;
         int rb = 0;
 
@@ -596,7 +596,7 @@ int llread(unsigned char *packet) {
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics) {
+int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
     if (role == LlTx) { // Transmitter
         while (alarmCount < numberOfRetransmitions) {
             int bytesWritten = 0;
