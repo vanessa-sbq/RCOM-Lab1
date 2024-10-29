@@ -67,11 +67,19 @@ void alarmHandler(int signal) {
 int checkSUFrame(char controlField, int* ringringEnabled){
     state_t state = START;
     while (state != STOP_STATE && (*ringringEnabled)) {
+        printf("DA BLUETOOS DEVICE IS LEADY TO PAIL\n");
         char byte = 0;
-        if (readByte(&byte) == -1) return -1;
+        int rb = 0;
+
+        if ((rb = readByte(&byte)) == -1) return -1;
+
+        if (rb == 0) continue;
+
+        if (byte != 0x00) printf("byte: %.8x\n", byte);
+
         switch (state) {
             case START:
-                if (state == FLAG) state = FLAG_RCV;
+                if (byte == FLAG) state = FLAG_RCV;
                 break;
             case FLAG_RCV:
                 state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
@@ -87,6 +95,7 @@ int checkSUFrame(char controlField, int* ringringEnabled){
                 state = byte == FLAG ? STOP_STATE : START;
                 break;
             case STOP_STATE:
+                printf("SET read successfully\n");
                 break;
             default:
                 state = START;
@@ -112,38 +121,60 @@ int llopen(LinkLayer connectionParameters) {
     if (role == LlTx) { // Transmitter
         while (alarmCount < numberOfRetransmitions) {
             int bytesWritten = 0;
-
             if (alarmEnabled == FALSE){
-                alarm(timeout); // Set alarm to be triggered after timeout
-                alarmEnabled = TRUE;
-
+                
                 // Assemble SET frame
-                int array_size = 5;
+                //int array_size = 5;
                 char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
                 char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
 
                 // Send SET frame
-                while (bytesWritten != 5) { // FIXME: Remove hard-coded value?
-                    bytesWritten = writeBytes((set_array + sizeof(char) * bytesWritten), array_size - bytesWritten);
-                    if (bytesWritten == -1) {
+                bytesWritten = writeBytes(set_array, 5);
+
+                if (bytesWritten == -1) {
+                    printf("%s: Error in writeBytes.\n", __func__);
+                    return -1;
+                }
+
+                alarm(timeout); // Set alarm to be triggered after timeout
+                alarmEnabled = TRUE;
+                
+                /* for (int i = 0; i < 5; i++) {
+                    int wb = writeBytes(&set_array[i], 1);
+
+                    if (wb == -1) {
+                        printf("%s: Error in writeBytes.\n", __func__);
                         return -1;
                     }
-                }
-                sleep(1); // Wait until all bytes have been written to the serial port
+                } */
+                sleep(1); // TODO: Is this needed?
+                printf("TX just wrote\n");
+                //sleep(1); // Wait until all bytes have been written to the serial port
             }
 
             if (bytesWritten == 5) {
+                alarm(0);
+                alarmCount = 0;
+                alarm(timeout); // Set alarm to be triggered after timeout
+                alarmEnabled = TRUE;
                 int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
-                if (csu == -1) return -1;
-                else return 0;   
+                if (csu == -1) {
+                    return -1;
+                } else {
+                    alarm(0);
+                    alarmEnabled = FALSE;
+                    alarmCount = 0;
+                    return 1;   
+                } 
             }
         }
     } else if (role == LlRx) { // Receiver
         int enterCheckSUFrame = TRUE;
         while (enterCheckSUFrame) {
+            int csu = checkSUFrame(CONTROL_SET, &enterCheckSUFrame);
 
-            int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
             if (csu == -1) {
+                printf("%s: An error occurred inside checkSUFrame.\n", __func__);
                 return -1;
             }
 
@@ -153,15 +184,13 @@ int llopen(LinkLayer connectionParameters) {
             int wb = writeBytes(ua_array, 5);
 
             if (wb == -1) {
+                printf("%s: An error occurred inside writeBytes.\n", __func__);
                 return -1;
-            } else if (wb == 5) {
-                return 0;
-            } else {
-                continue;
-            }
+            } 
+            else if (wb == 5) return 1;
+            else continue;
         }
     }
-
     return -1;
 }
 
@@ -172,6 +201,9 @@ int llopen(LinkLayer connectionParameters) {
 // If it returns a negative value then an error occoured.
 // If it returns 0 then no errors occoured.
 int readIFrameResponse() {
+
+    printf("NOW READING IFRAMERESPOSNE\n");
+
     state_t state = START;
     char BCC1 = 0x00;
     char byte;
@@ -182,6 +214,8 @@ int readIFrameResponse() {
         if (rb == -1) {
             return -1;
         }
+
+        if (rb == 0) continue;
 
         switch (state) {
             case START:
@@ -217,12 +251,15 @@ int readIFrameResponse() {
                 BCC1 = ADDRESS_SENT_BY_TX ^ byte;
                 break;
             case C_RCV:
+                printf("NOW IN CRCV\n");
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
+                printf("NOW IN BCCOK WITH BYTE BEING %x\n", byte);
                 state = byte == FLAG ? STOP_STATE : START;
                 break;
             case STOP_STATE:
+                printf("STOP_STATE\n");
                 break;
             default:
                 state = START;
@@ -279,7 +316,7 @@ int llwrite(const unsigned char *buf, int bufSize) {
 
     printf("\n After Byte Stuffing: "); // TODO: Remove
     for (int i = 0; i < newFrameSize; i++) {
-        printf("%x ", frame[i]);
+        printf("%.2x ", frame[i]);
     }
 
     printf("\n");   // TODO: Remove
@@ -294,18 +331,30 @@ int llwrite(const unsigned char *buf, int bufSize) {
 
     int retransmitionCounter = 0;
     int wb = 0;
+    alarmCount = 0;
+    alarmEnabled = FALSE;
 
     while (retransmitionCounter <= numberOfRetransmitions) {  // TODO: Change condition
 
         if (alarmEnabled == FALSE){
+
+            printf("TX IS WRITING\n");
+
+            wb = writeBytes(frame, newFrameSize);
+
             alarm(timeout); // Set alarm
             alarmEnabled = TRUE;
-            
-            wb = writeBytes(frame, newFrameSize);
 
             if (wb == -1) {
                 return -1;
             } else if (wb == newFrameSize) {
+                if (readIFrameResponse() != 0) {
+                    printf("%s: An error occured in readIFrameResponse.\n");
+                    return -1;
+                }
+                alarm(0);
+                alarmEnabled = FALSE;
+                alarmCount = 0;
                 break;
             } else {
                 retransmitionCounter++;
@@ -314,12 +363,12 @@ int llwrite(const unsigned char *buf, int bufSize) {
             
         }
         sleep(1); // Guarantee that all bytes were written.
-        readIFrameResponse();
+        
     }
 
     free(frame);
 
-    return wb;
+    return (wb - 6);
 }
 
 ////////////////////////////////////////////////
@@ -340,11 +389,14 @@ void sendAck(int localControlType) {
 
     // SEND ACK
     char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, RR, BCC1, FLAG};
-    int wb = writeBytes(ua_array, 5);
+    writeBytes(ua_array, 5);  // TODO: Check errors
 }
 
 
 int llread(unsigned char *packet) {
+
+    //printf("Entering llread\n");
+
     if (packet == NULL) {
         return -1;
     }
@@ -355,22 +407,33 @@ int llread(unsigned char *packet) {
 
     while (state != STOP_STATE) {
         char byte = 0;
-        if (readByte(&byte) == -1) return -1;
+        int rb = 0;
 
+        if ((rb = readByte(&byte)) == -1) return -1;
+        if (rb == 0) {
+            //printf("rb is 0\n");
+            continue;
+        }
         int controlField = controlType ? I_FRAME_1 : I_FRAME_0;
 
         switch (state) {
             case START:
-                if (state == FLAG) state = FLAG_RCV;
+                //printf("HERE START\n");
+                if (byte == FLAG) state = FLAG_RCV;
                 break;
             case FLAG_RCV:
+                //printf("HERE IN FLAG_RCV\n");
                 state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
                 break;
             case A_RCV:
+                //printf("HERE IN ARCV\n");
                 state = byte == FLAG ? FLAG_RCV : (byte == controlField ? C_RCV : START);
 
                 if ((byte == I_FRAME_0 && controlType) || (byte == I_FRAME_1 && !controlType)) {
+
+                    printf("READY TO SEND ACK\n");
                     sendAck(!controlType); // We want to send the old acknowledgment.
+                    printf("SENT ACK\n");
                     state = STOP_STATE;
                     currentDataFrameIt = 0;
                     free(dataFrame);
@@ -379,17 +442,22 @@ int llread(unsigned char *packet) {
 
                 break;
             case C_RCV:
+                printf("HERE IN CRCV\n");
                 char BCC1 = ADDRESS_SENT_BY_TX ^ controlField;
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
+                //printf("HERE IN BCCOK\n");
                 dataFrame[currentDataFrameIt] = byte;
                 currentDataFrameIt++;
                 dataFrame = (char*)realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(char));
 
-                if (dataFrame == NULL || currentDataFrameIt + 1 > MAX_PAYLOAD_SIZE) return -1;
+                if (dataFrame == NULL) return -1;
 
-                if (byte == FLAG) state = CHECK_DATA;
+                if (byte == FLAG){
+                    printf("FOUND FLAG FOUND FLAGGGGGGG\n");
+                    state = CHECK_DATA;
+                } 
                 // gets first byte...
                 // gets next byte ...
                 // gets n byte ...
@@ -407,7 +475,7 @@ int llread(unsigned char *packet) {
 
             int expectDestuffing = FALSE;
             for (int i = 0; i < (data_bcc2_flag_size - 2); i++) { // Byte destuffing
-
+                printf("WE ARE INSIDE THE CHECK DATA DESTUF\n");
                 if (expectDestuffing) {
 
                     if (((dataFrame[i] ^ ESCAPE_XOR) == ESCAPE_OCTET) || ((dataFrame[i] ^ ESCAPE_XOR) == FLAG)) { // Then we are really suppost to do destuffing
@@ -451,11 +519,26 @@ int llread(unsigned char *packet) {
             // FIXME: What if BCC2 is equal to FLAG?
             char dataAccm = 0x00;
 
+
+
+            for (int i = 0; i < sizeOfActualData; i++) {
+                printf("%x", actualData[i]);  // EXOR all the destuffed data bytes
+            }
+
+
+            // FIXME:::::: XOR IS INVALID ??????????
+            // FIXME: XOR MAY NOT BE INVALID ? FIND OUT WHERE 2C came from ?????
+
             for (int i = 0; i < sizeOfActualData; i++) {
                 dataAccm ^= actualData[i];  // EXOR all the destuffed data bytes
             }
 
-            if (dataAccm != dataFrame[data_bcc2_flag_size - 2]) { // If dataAccm is not the same as BCC2, something went wrong
+            
+
+            if (dataAccm != dataFrame[data_bcc2_flag_size - 2] || sizeOfActualData > MAX_PAYLOAD_SIZE) { // If dataAccm is not the same as BCC2, something went wrong
+
+                printf("XOOOOOOOOOOOOORRRRRRRRRRRRR INNNNNNVALIIIIIIID %.2x\n", dataFrame[data_bcc2_flag_size - 2]);
+                exit(1);
 
                 char REJ = 0x00;
 
@@ -469,7 +552,7 @@ int llread(unsigned char *packet) {
 
                 // SEND NACK
                 char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, REJ, BCC1, FLAG};
-                int wb = writeBytes(ua_array, 5);
+                writeBytes(ua_array, 5); // TODO: Check errors
                 state = START;
 
                 // TODO: Clean allocated space
@@ -486,7 +569,11 @@ int llread(unsigned char *packet) {
 
             } else {
 
+                printf("After destuffing\n");
                 for (int i = 0; i < actualDataIt; i++) {
+
+                    printf("Bytes are %.2x\n",(unsigned char)actualData[i] );
+
                     packet[i] = (unsigned char)actualData[i]; 
                 }
 
@@ -495,13 +582,15 @@ int llread(unsigned char *packet) {
                 sendAck(controlType); // Use normal control type. Not inverted.
 
                 state = START;
-                
+            
                 state = STOP_STATE;
+            
+                return actualDataIt;
             }
         }
     }
 
-    return 0;
+    return -1;
 }
 
 ////////////////////////////////////////////////
@@ -531,7 +620,7 @@ int llclose(int showStatistics) {
                 sleep(1); // Wait until all bytes have been written to the serial port
             }
 
-            if (bytesWritten == 5) {
+            if (bytesWritten == 5) { //FIXME: DISABLE ALARM
                 int csu = checkSUFrame(CONTROL_DISC, &alarmEnabled);
                 if (csu == -1) return -1;
                 else return 1;   
@@ -563,13 +652,9 @@ int llclose(int showStatistics) {
 
             int wb = writeBytes(ua_array, 5);
 
-            if (wb == -1) {
-                return -1;
-            } else if (wb == 5) {
-                return 1;
-            } else {
-                continue;
-            }
+            if (wb == -1) return -1;
+            else if (wb == 5) return 1;
+            else continue;
         }
     }
 
