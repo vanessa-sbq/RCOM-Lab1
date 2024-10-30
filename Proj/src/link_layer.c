@@ -627,7 +627,7 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
             }
             totalNumOfRetransmitions++;
         }
-
+        printf("Number of dropped packets (TX): %ld\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)));
     } else if (role == LlRx) { // Receiver
         printf("RX entered llclose()\n");
         int enterCheckSUFrame = TRUE;
@@ -645,6 +645,7 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
 
             if (wb == -1) return -1;
             else if (wb == 5) {
+                printf("Number of dropped packets (RX): %ld\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)) - ((int)(totalNumOfDuplicateFrames)));
                 printf("Number of frames received that were duplicate: %ld\n", totalNumOfDuplicateFrames);
                 break;
             }
