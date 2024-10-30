@@ -91,6 +91,7 @@ int checkSUFrame(char controlField, int* ringringEnabled){
         if (rb == 0) continue;
 
         if (byte != 0x00) printf("byte: %.8x\n", byte);
+        char BCC1 = 0x00;
 
         switch (state) {
             case START:
@@ -103,7 +104,7 @@ int checkSUFrame(char controlField, int* ringringEnabled){
                 state = byte == FLAG ? FLAG_RCV : (byte == controlField ? C_RCV : START);
                 break;
             case C_RCV:
-                char BCC1 = ADDRESS_SENT_BY_TX ^ controlField;
+                BCC1 = ADDRESS_SENT_BY_TX ^ controlField;
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
@@ -417,14 +418,20 @@ int llwrite(const unsigned char *buf, int bufSize) {
 void sendAck(char receivedCField) {
     printf("Expected: %x, actual: %x \n", prevCField, receivedCField);
 
+    char prevCFieldChar = prevCField ? I_FRAME_0 : I_FRAME_1;
     char RR = 0x00;
-    if (receivedCField == I_FRAME_0) {
-        RR = CONTROL_RR1;
-        prevCField = 0;
+    if (receivedCField == prevCFieldChar){
+        RR = prevCFieldChar;
     }
     else {
-        RR = CONTROL_RR0;
-        prevCField = 1;
+        if (receivedCField == I_FRAME_0) {
+            RR = CONTROL_RR1;
+            prevCField = 0;
+        }
+        else {
+            RR = CONTROL_RR0;
+            prevCField = 1;
+        }
     }
 
     // Conditions
@@ -454,6 +461,8 @@ int llread(unsigned char *packet) {
         int rb = 0;
         if ((rb = readByte(&byte)) == -1) return -1;
         if (rb == 0) continue;
+
+        char BCC1 = 0x00; 
     
         switch (state) {
             case START:
@@ -474,7 +483,7 @@ int llread(unsigned char *packet) {
                 break;
             case C_RCV:
                 //printf("HERE IN CRCV\n"); // TODO: Remove (DEBUG)
-                char BCC1 = ADDRESS_SENT_BY_TX ^ receivedCField;
+                BCC1 = ADDRESS_SENT_BY_TX ^ receivedCField;
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
