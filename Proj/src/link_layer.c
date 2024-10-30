@@ -166,6 +166,7 @@ int llopen(LinkLayer connectionParameters) {
             if (bytesWritten == 5) {
                 alarm(timeout); // Set alarm to be triggered after timeout
                 alarmEnabled = TRUE;
+                //sleep(1);
                 int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
                 if (csu == -1) return -1;
                 else if (alarmEnabled){
@@ -215,7 +216,7 @@ int llopen(LinkLayer connectionParameters) {
  *        -1 on error
 */
 int readIFrameResponse() {
-    printf("NOW READING IFRAMERESPOSNE\n"); // TODO: Remove (DEBUG)
+    printf("NOW READING IFRAMERESPOSNE %d\n", alarmEnabled); // TODO: Remove (DEBUG)
 
     state_t state = START;
     char BCC1 = 0x00;
@@ -284,6 +285,8 @@ int readIFrameResponse() {
                 break;
         }
     }
+
+    printf("Now exiting readIFrameResponse %d\n", alarmEnabled);
     return isInvalid;
 }
 
@@ -363,35 +366,52 @@ int llwrite(const unsigned char *buf, int bufSize) {
 
     frame[newFrameSize - 1] = FLAG;    
 
-    int retransmitionCounter = 0;
     int wb = 0;
+
+    
+    signal(SIGALRM, alarmHandler);
+    alarm(0);
+
     alarmCount = 0;
     alarmEnabled = FALSE;
-    while (retransmitionCounter < numberOfRetransmitions) {  // TODO: Change condition
+
+    /* 
+        previousCFieldToSendNext;
+
+        must compare the two. If they are the same then the packet was not sent correctly
+
+
+    */
+
+    int previousCFieldToSendNext = CFieldToSendNext;
+
+    while (alarmCount < numberOfRetransmitions) {  // TODO: Change condition
         if (alarmEnabled == FALSE){
             printf("TX IS WRITING\n");
-            wb = writeBytes(frame, newFrameSize);
+            int bytesWritten = writeBytes(frame, newFrameSize);
             totalNumOfFrames++;
-            alarm(timeout); // Set alarm
-            alarmEnabled = TRUE;
+            
 
             if (wb == -1) {
                 return -1;
-            } else if (wb == newFrameSize) {
+            } else {
                 int response = 0;
+                alarm(timeout); // Set alarm
+                alarmEnabled = TRUE;
                 if ((response = readIFrameResponse()) == -1) {
                     printf("%s: An error occured in readIFrameResponse.\n", __func__);
                     return -1;
                 }
-                if (response == 0) {
+                if (response == 0 && (previousCFieldToSendNext != CFieldToSendNext)) {
                     alarm(0);
+                    printf("Response was read.\n");
+                    wb = bytesWritten - 6 - numBytesStuffed;
                     alarmEnabled = FALSE;
                     alarmCount = 0;
                     break;
                 }
             }
 
-            retransmitionCounter++;
             totalNumOfRetransmitions++;
         }
         //sleep(1); // Guarantee that all bytes were written. // TODO: Remove
@@ -400,7 +420,7 @@ int llwrite(const unsigned char *buf, int bufSize) {
     free(frame);
 
     // Return number of writer characters
-    return (wb - 6 - numBytesStuffed);
+    return wb;
 }
 
 ////////////////////////////////////////////////
@@ -418,10 +438,10 @@ int llwrite(const unsigned char *buf, int bufSize) {
 void sendAck(char receivedCField) {
     printf("Expected: %x, actual: %x \n", prevCField, receivedCField);
 
-    char prevCFieldChar = prevCField ? I_FRAME_0 : I_FRAME_1;
+    char prevCFieldChar = prevCField ? I_FRAME_1 : I_FRAME_0; // If previous C Field is 1, then previous C Field Char is I_FRAME_1 (0x80).
     char RR = 0x00;
     if (receivedCField == prevCFieldChar){
-        RR = prevCFieldChar;
+        RR = prevCField ? CONTROL_RR0 : CONTROL_RR1;
     }
     else {
         if (receivedCField == I_FRAME_0) {

@@ -162,14 +162,11 @@ int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
  *        -1 on error
 */
 int llwriteWrapper(unsigned char* packet, int sizeOfPacket) {
-    while (1) {
-        int bytesWritten = llwrite(packet, sizeOfPacket);
-        if (bytesWritten == -1) return -1;
-        if (bytesWritten == 0) continue;
-        printf("EXPECTED %x BUT BYTES WRITTEN WERE %x\n", sizeOfPacket, bytesWritten);
-        if (bytesWritten == sizeOfPacket) return 0;
-    }
-    return 0;
+
+    int bytesWritten = llwrite(packet, sizeOfPacket);
+    if (bytesWritten == -1) return -1;
+    return bytesWritten;
+
 }
 
 
@@ -214,9 +211,14 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
     }
 
     // Send the start control packet
-    if (llwriteWrapper(controlPacket, sizeOfControlPacket) == -1) {
-        printf("%s: An error occurred while trying to send the START Control Packet.\n", __func__);
+    int bytesWritten;
+    if ((bytesWritten = llwriteWrapper(controlPacket, sizeOfControlPacket)) == -1) {
+        printf("%s: An error occurred while trying to send the END Control Packet.\n", __func__);
         return -1;
+    }
+
+    if (bytesWritten == 0) {
+        return 0;
     }
 
     // Create data packet
@@ -237,10 +239,16 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
         }
 
         // Send the data packet
-        if (llwriteWrapper(dataPacket, sizeOfDataPacket) == -1) {
+        if ((bytesWritten = llwriteWrapper(dataPacket, sizeOfDataPacket)) == -1) {
             printf("%s: An error occurred while trying to send the START Control Packet.\n", __func__);
             return -1;
         }
+
+
+        if (bytesWritten == 0) {
+            return 0;
+        }
+
 
         free(dataPacket);
     }
@@ -253,9 +261,13 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
     }
 
     // Send the end control packet.
-    if (llwriteWrapper(controlPacket, sizeOfControlPacket) == -1) {
+    if ((bytesWritten = llwriteWrapper(controlPacket, sizeOfControlPacket)) == -1) {
         printf("%s: An error occurred while trying to send the END Control Packet.\n", __func__);
         return -1;
+    }
+
+    if (bytesWritten == 0) {
+        return 0;
     }
 
     free(controlPacket);
