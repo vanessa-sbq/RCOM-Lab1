@@ -54,6 +54,14 @@ static int prevCField = 1;
 // C Field to send next (for tx)
 static int CFieldToSendNext = 0;
 
+// Stastics
+unsigned long totalNumOfFrames = 0;
+unsigned long totalNumOfValidFrames = 0;
+unsigned long totalNumOfInvalidFrames = 0;
+unsigned long totalNumOfDuplicateFrames = 0;
+unsigned long totalNumOfRetransmitions = 0;
+unsigned long totalNumOfTimeouts = 0;
+
 
 // Handler
 int alarmEnabled = FALSE;
@@ -136,7 +144,6 @@ int llopen(LinkLayer connectionParameters) {
         while (alarmCount < numberOfRetransmitions) {
             int bytesWritten = 0;
             if (alarmEnabled == FALSE){
-                
                 // Assemble SET frame
                 char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
                 char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
@@ -161,13 +168,14 @@ int llopen(LinkLayer connectionParameters) {
                 int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
                 if (csu == -1) return -1;
                 else if (alarmEnabled){
-                    printf("HERE ALO ALO AQUI AQUI\n");
+                    printf("HERE ALO ALO AQUI AQUI\n"); // TODO: Remove (DEBUG)
                     alarm(0);
                     alarmEnabled = FALSE;
                     alarmCount = 0;
                     return 1;   
                 } 
             }
+            totalNumOfRetransmitions++;
         }
     } else if (role == LlRx) { // Receiver
         int enterCheckSUFrame = TRUE;
@@ -190,6 +198,7 @@ int llopen(LinkLayer connectionParameters) {
             } 
             else if (wb == 5) return 1;
             else continue;
+            totalNumOfRetransmitions++; // TODO: Should this be here?
         }
     }
     return -1;
@@ -200,7 +209,8 @@ int llopen(LinkLayer connectionParameters) {
 ////////////////////////////////////////////////
 /**
  * Reads an I frame response (ACK or NACK) to determine which frame to send next
- * returns 0 on success
+ * returns 0 on valid frame
+ *         1 on invalid frame
  *        -1 on error
 */
 int readIFrameResponse() {
@@ -209,6 +219,7 @@ int readIFrameResponse() {
     state_t state = START;
     char BCC1 = 0x00;
     char byte;
+    int isInvalid = 0;
 
     while (state != STOP_STATE && alarmEnabled) {
         int rb = readByte(&byte);
@@ -225,20 +236,26 @@ int readIFrameResponse() {
                 switch (byte) {
                     case CONTROL_RR0:
                         printf("Received RR0\n");
+                        totalNumOfValidFrames++;
                         state = C_RCV;
                         CFieldToSendNext = 0;
                         break;
                     case CONTROL_RR1:
                         printf("Received RR1\n");
+                        totalNumOfValidFrames++;
                         state = C_RCV;
                         CFieldToSendNext = 1;
                         break;
                     case CONTROL_REJ0:
                         printf("Received REJ0\n");
+                        totalNumOfInvalidFrames++;
+                        isInvalid = 1;
                         state = C_RCV;
                         break;
                     case CONTROL_REJ1:
                         printf("Received REJ1\n");
+                        totalNumOfInvalidFrames++;
+                        isInvalid = 1;
                         state = C_RCV;
                         break;
                     case FLAG:
@@ -266,7 +283,7 @@ int readIFrameResponse() {
                 break;
         }
     }
-    return 0;
+    return isInvalid;
 }
 
 /**
@@ -353,23 +370,28 @@ int llwrite(const unsigned char *buf, int bufSize) {
         if (alarmEnabled == FALSE){
             printf("TX IS WRITING\n");
             wb = writeBytes(frame, newFrameSize);
+            totalNumOfFrames++;
             alarm(timeout); // Set alarm
             alarmEnabled = TRUE;
 
             if (wb == -1) {
                 return -1;
             } else if (wb == newFrameSize) {
-                if (readIFrameResponse() != 0) {
+                int response = 0;
+                if ((response = readIFrameResponse()) == -1) {
                     printf("%s: An error occured in readIFrameResponse.\n", __func__);
                     return -1;
                 }
-                alarm(0);
-                alarmEnabled = FALSE;
-                alarmCount = 0;
-                break;
+                if (response == 0) {
+                    alarm(0);
+                    alarmEnabled = FALSE;
+                    alarmCount = 0;
+                    break;
+                }
             }
 
             retransmitionCounter++;
+            totalNumOfRetransmitions++;
         }
         //sleep(1); // Guarantee that all bytes were written. // TODO: Remove
     }
@@ -505,18 +527,8 @@ int llread(unsigned char *packet) {
             }
 
             // Check BCC2
-            // FIXME: What if BCC2 is equal to FLAG?
             char dataAccm = 0x00;
 
-            //printf("VALUEE OF SIZEOFACTUALDATA %d\n", actualDataIt); // TODO: Remove (DEBUG)
-
-            /* for (int i = 0; i < actualDataIt; i++) {
-                printf("%x", actualData[i]);  // EXOR all the destuffed data bytes
-            } */ // TODO: Remove (DEBUG)
-
-            // FIXME: XOR IS INVALID ??????????
-            // FIXME: XOR MAY NOT BE INVALID ? FIND OUT WHERE 2C came from ?????
-            //if (sizeOfActualData > 1) actualData = (char*)realloc(actualData, (sizeOfActualData - 1) * sizeof(char)); // Resize actual data (to remove BCC2)
             for (int i = 0; i < sizeOfActualData-1; i++) {
                 dataAccm ^= actualData[i];  // EXOR all the destuffed data bytes
             }
@@ -547,6 +559,8 @@ int llread(unsigned char *packet) {
                 actualData = (char*)malloc(sizeof(char));
                 actualDataIt = 0;
                 sizeOfActualData = 1;
+                totalNumOfFrames++;
+                totalNumOfInvalidFrames++;
             } else { 
                 // Case - Frame is a duplicate (Accept and discard)
                 if (prevCField == receivedCField){
@@ -554,6 +568,8 @@ int llread(unsigned char *packet) {
                     sendAck(receivedCField); 
                     free(dataFrame);
                     free(actualData);
+                    totalNumOfFrames++;
+                    totalNumOfDuplicateFrames++;
                     return 0;
                 }
 
@@ -565,6 +581,8 @@ int llread(unsigned char *packet) {
                 }
                 sendAck(receivedCField); 
                 printf("Frame accepted\n");
+                totalNumOfFrames++;
+                totalNumOfValidFrames++;
                 return sizeOfActualData;
             }
             // 3 - Reads same frame again (prevCField + discard frame)
@@ -578,6 +596,7 @@ int llread(unsigned char *packet) {
 // LLCLOSE
 ////////////////////////////////////////////////
 int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
+    printf("Statistics:\n");
     if (role == LlTx) { // Transmitter
         while (alarmCount < numberOfRetransmitions) {
             int bytesWritten = 0;
@@ -604,19 +623,9 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
             if (bytesWritten == 5) { //FIXME: DISABLE ALARM
                 int csu = checkSUFrame(CONTROL_DISC, &alarmEnabled);
                 if (csu == -1) return -1;
-                else return 1;   
+                else break;   
             }
-        }
-
-
-        // Is this correct ??????????
-        while (1) {
-            int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
-            if (csu == -1) {
-                return -1;
-            } else {
-                return 1;
-            }
+            totalNumOfRetransmitions++;
         }
 
     } else if (role == LlRx) { // Receiver
@@ -635,13 +644,21 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
             int wb = writeBytes(ua_array, 5);
 
             if (wb == -1) return -1;
-            else if (wb == 5) return 1;
+            else if (wb == 5) {
+                printf("Number of frames received that were duplicate: %ld\n", totalNumOfDuplicateFrames);
+                break;
+            }
             else continue;
         }
+    }    
+   
+    printf("Number of frames that were sent/received and are valid: %ld\n", totalNumOfValidFrames);
+    printf("Number of frames that were sent/recevived and are invalid: %ld\n", totalNumOfInvalidFrames);
+    printf("Total number of frames that were sent/received: %ld\n", totalNumOfFrames);
+
+    if (closeSerialPort() == -1){
+        printf("%s: Error while closing serial port\n", __func__);
+        return -1;
     }
-
     return 1;
-
-    int clstat = closeSerialPort();
-    return clstat;
 }
