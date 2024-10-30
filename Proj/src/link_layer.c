@@ -1,5 +1,4 @@
 // Link layer protocol implementation
-
 #include "link_layer.h"
 #include "serial_port.h"
 
@@ -49,8 +48,12 @@ static int numberOfRetransmitions = 0;
 static int timeout = 0;
 static LinkLayerRole role;
 
-// I frame number
-static int controlType = FALSE;
+// Previous C Field (for rx)
+static int prevCField = 1; 
+
+// C Field to send next (for tx)
+static int CFieldToSendNext = 0;
+
 
 // Handler
 int alarmEnabled = FALSE;
@@ -63,16 +66,20 @@ void alarmHandler(int signal) {
 }
 
 
-/// Supervision frames and Unnumbered frames state machine
+/**
+ * Supervision frames and Unnumbered frames state machine 
+ * controlField - control field to be checked (depending on the frame type)
+ * ringringEnabled - Flag (because both tx and rx use this function)
+ * returns 0 on success
+ *        -1 on error
+*/
 int checkSUFrame(char controlField, int* ringringEnabled){
     state_t state = START;
     while (state != STOP_STATE && (*ringringEnabled)) {
         //printf("DA BLUETOOS DEVICE IS LEADY TO PAIL\n"); // TODO: Remove (DEBUG)
         char byte = 0;
         int rb = 0;
-
         if ((rb = readByte(&byte)) == -1) return -1;
-
         if (rb == 0) continue;
 
         if (byte != 0x00) printf("byte: %.8x\n", byte);
@@ -109,7 +116,14 @@ int checkSUFrame(char controlField, int* ringringEnabled){
 ////////////////////////////////////////////////
 // LLOPEN
 ////////////////////////////////////////////////
+/**
+ * Function that opens the connection between tx and rx
+ * connectionParameters - connection parameters (about tx or rx) 
+ * returns 1 on success
+ *        -1 on error
+*/
 int llopen(LinkLayer connectionParameters) {
+    signal(SIGALRM, alarmHandler);
     numberOfRetransmitions = connectionParameters.nRetransmissions;
     timeout = connectionParameters.timeout;
     role = connectionParameters.role;
@@ -124,7 +138,6 @@ int llopen(LinkLayer connectionParameters) {
             if (alarmEnabled == FALSE){
                 
                 // Assemble SET frame
-                //int array_size = 5;
                 char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
                 char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
 
@@ -139,28 +152,16 @@ int llopen(LinkLayer connectionParameters) {
                 alarm(timeout); // Set alarm to be triggered after timeout
                 alarmEnabled = TRUE;
                 
-                /* for (int i = 0; i < 5; i++) {
-                    int wb = writeBytes(&set_array[i], 1);
-
-                    if (wb == -1) {
-                        printf("%s: Error in writeBytes.\n", __func__);
-                        return -1;
-                    }
-                } */
-                sleep(1); // TODO: Is this needed?
-                printf("TX just wrote\n");
-                //sleep(1); // Wait until all bytes have been written to the serial port
+                printf("TX just wrote\n"); // TODO: Remove (DEBUG)
             }
 
             if (bytesWritten == 5) {
-                alarm(0);
-                alarmCount = 0;
                 alarm(timeout); // Set alarm to be triggered after timeout
                 alarmEnabled = TRUE;
                 int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
-                if (csu == -1) {
-                    return -1;
-                } else {
+                if (csu == -1) return -1;
+                else if (alarmEnabled){
+                    printf("HERE ALO ALO AQUI AQUI\n");
                     alarm(0);
                     alarmEnabled = FALSE;
                     alarmCount = 0;
@@ -197,12 +198,13 @@ int llopen(LinkLayer connectionParameters) {
 ////////////////////////////////////////////////
 // LLWRITE
 ////////////////////////////////////////////////
-
-// If it returns a negative value then an error occoured.
-// If it returns 0 then no errors occoured.
+/**
+ * Reads an I frame response (ACK or NACK) to determine which frame to send next
+ * returns 0 on success
+ *        -1 on error
+*/
 int readIFrameResponse() {
-
-    printf("NOW READING IFRAMERESPOSNE\n");
+    printf("NOW READING IFRAMERESPOSNE\n"); // TODO: Remove (DEBUG)
 
     state_t state = START;
     char BCC1 = 0x00;
@@ -210,13 +212,8 @@ int readIFrameResponse() {
 
     while (state != STOP_STATE && alarmEnabled) {
         int rb = readByte(&byte);
-
-        if (rb == -1) {
-            return -1;
-        }
-
+        if (rb == -1) return -1;
         if (rb == 0) continue;
-
         switch (state) {
             case START:
                 state = byte == FLAG ? FLAG_RCV : START;
@@ -227,17 +224,21 @@ int readIFrameResponse() {
             case A_RCV:
                 switch (byte) {
                     case CONTROL_RR0:
+                        printf("Received RR0\n");
                         state = C_RCV;
-                        controlType = FALSE;
+                        CFieldToSendNext = 0;
                         break;
                     case CONTROL_RR1:
+                        printf("Received RR1\n");
                         state = C_RCV;
-                        controlType = TRUE;
+                        CFieldToSendNext = 1;
                         break;
                     case CONTROL_REJ0:
+                        printf("Received REJ0\n");
                         state = C_RCV;
                         break;
                     case CONTROL_REJ1:
+                        printf("Received REJ1\n");
                         state = C_RCV;
                         break;
                     case FLAG:
@@ -247,40 +248,45 @@ int readIFrameResponse() {
                         state = START;
                         break;
                 }
-
                 BCC1 = ADDRESS_SENT_BY_TX ^ byte;
                 break;
             case C_RCV:
-                printf("NOW IN CRCV\n");
+                //printf("NOW IN CRCV\n"); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
-                printf("NOW IN BCCOK WITH BYTE BEING %x\n", byte);
+                //printf("NOW IN BCCOK WITH BYTE BEING %x\n", byte); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? STOP_STATE : START;
                 break;
             case STOP_STATE:
-                printf("STOP_STATE\n");
+                //printf("STOP_STATE\n"); // TODO: Remove (DEBUG)
                 break;
             default:
                 state = START;
                 break;
         }
-
-
     }
-
     return 0;
-    
 }
 
+/**
+ * Function that tx uses to write frames to the serial port 
+ * buf - frame to write to serial port (before byte stuffing)
+ * bufSize - Size of the frame to write to serial port (before byte stuffing)
+ * returns number of data bytes written (without byte stuffing) on success
+ *        -1 on error
+*/
 int llwrite(const unsigned char *buf, int bufSize) {
-    if (bufSize < 0 || buf == NULL) {
-        return -1;    
-    }
-
+    if (bufSize < 0 || buf == NULL) return -1;    
+    
     int newFrameSize = bufSize + 6;
+    int numBytesStuffed = 0;
     for (int i = 0; i < bufSize; i++) { // Get the new frame size for byte stuffing
-        if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET) newFrameSize++;
+        if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET) {
+            printf("FOUND A FLAG INSIDE DATA\n");
+            numBytesStuffed++;
+            newFrameSize++;
+        }
     }
 
     char* frame = (char*)malloc(sizeof(char) * (newFrameSize));
@@ -288,60 +294,65 @@ int llwrite(const unsigned char *buf, int bufSize) {
     frame[0] = FLAG; 
     frame[1] = ADDRESS_SENT_BY_TX;
 
-    if (!controlType) {
-        frame[2] = 0x00;
-    } else {
-        frame[2] = 0x80;
-    }
-
+    if (CFieldToSendNext) frame[2] = 0x80; // Send frame 1 next
+    else frame[2] = 0x00; // Send frame 0 next
+    //if (!controlType) frame[2] = 0x00;
+    //else frame[2] = 0x80;
     
     frame[3] = frame[1] ^ frame[2];
 
+    // Byte Stuffing
     int j = 0;
     for (int i = 0; i < bufSize; i++) {
         if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET){
             frame[4 + j] = ESCAPE_OCTET;
             j++;
-            frame[4 + j] = buf[i] ^ ESCAPE_XOR; // DO THE XOR
+            frame[4 + j] = buf[i] ^ ESCAPE_XOR; // Do the XOR
         } else {
-            frame[4+j] = buf[i];
+            frame[4 + j] = buf[i];
         }
         j++;
     }
 
-    printf("\n DEBUG: Now doing byte stuffing part. -> Before: "); // TODO: Remove
+    printf("\n DEBUG: Now doing byte stuffing part. -> Before: "); // TODO: Remove (DEBUG)
     for (int i = 0; i < bufSize; i++) {
         printf("%x ", buf[i]);
     }
 
-    printf("\n After Byte Stuffing: "); // TODO: Remove
+    printf("\n After Byte Stuffing: "); // TODO: Remove (DEBUG)
     for (int i = 0; i < newFrameSize; i++) {
         printf("%.2x ", frame[i]);
     }
 
-    printf("\n");   // TODO: Remove
+    printf("\n"); // TODO: Remove (DEBUG)
 
     char BCC2 = buf[0];
     for (int j = 1; j < bufSize; j++) {
         BCC2 ^= buf[j]; 
     }
 
-    frame[newFrameSize - 2] = BCC2;
-    frame[newFrameSize - 1] = FLAG;
+    // BCC2 byte stuffing
+    if (BCC2 == FLAG || BCC2 == ESCAPE_OCTET) {
+        printf("OH NO, BCC2 is a flag, how sad :(\n");
+        frame = (char*)realloc(frame, newFrameSize + sizeof(char) * 2);
+        newFrameSize++;
+        frame[newFrameSize - 3] = ESCAPE_OCTET;
+        frame[newFrameSize - 2] = BCC2 ^ ESCAPE_XOR;
+        numBytesStuffed++;
+    } else {
+        frame[newFrameSize - 2] = BCC2;
+    }
+
+    frame[newFrameSize - 1] = FLAG;    
 
     int retransmitionCounter = 0;
     int wb = 0;
     alarmCount = 0;
     alarmEnabled = FALSE;
-
-    while (retransmitionCounter <= numberOfRetransmitions) {  // TODO: Change condition
-
+    while (retransmitionCounter < numberOfRetransmitions) {  // TODO: Change condition
         if (alarmEnabled == FALSE){
-
             printf("TX IS WRITING\n");
-
             wb = writeBytes(frame, newFrameSize);
-
             alarm(timeout); // Set alarm
             alarmEnabled = TRUE;
 
@@ -349,206 +360,177 @@ int llwrite(const unsigned char *buf, int bufSize) {
                 return -1;
             } else if (wb == newFrameSize) {
                 if (readIFrameResponse() != 0) {
-                    printf("%s: An error occured in readIFrameResponse.\n");
+                    printf("%s: An error occured in readIFrameResponse.\n", __func__);
                     return -1;
                 }
                 alarm(0);
                 alarmEnabled = FALSE;
                 alarmCount = 0;
                 break;
-            } else {
-                retransmitionCounter++;
-                continue;
             }
-            
+
+            retransmitionCounter++;
         }
-        sleep(1); // Guarantee that all bytes were written.
-        
+        //sleep(1); // Guarantee that all bytes were written. // TODO: Remove
     }
 
     free(frame);
 
-    return (wb - 6);
+    // Return number of writer characters
+    return (wb - 6 - numBytesStuffed);
 }
 
 ////////////////////////////////////////////////
 // LLREAD
 ////////////////////////////////////////////////
+/**
+ * Helper function that sends an ACK to Tx.
+ * The function should get the values that is inside the frame and use it to respond to Tx.
+ * 
+ * This way if Tx sends frame 0, Rx should tell Tx that it wants frame 1.
+ * 
+ * returns void
+ * 
+*/
+void sendAck(char receivedCField) {
+    printf("Expected: %x, actual: %x \n", prevCField, receivedCField);
 
-void sendAck(int localControlType) {
     char RR = 0x00;
-
-    if (!localControlType) { // Inverted
+    if (receivedCField == I_FRAME_0) {
         RR = CONTROL_RR1;
-    } else {
+        prevCField = 0;
+    }
+    else {
         RR = CONTROL_RR0;
+        prevCField = 1;
     }
 
-
+    // Conditions
     char BCC1 = RR ^ ADDRESS_SENT_BY_TX;
 
-    // SEND ACK
+    // Send ACK
     char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, RR, BCC1, FLAG};
     writeBytes(ua_array, 5);  // TODO: Check errors
 }
 
-
+/**
+ * Function that rx uses to read frames from the serial port
+ * packet - buffer to read the frame data into
+ * returns number of data bytes read on success
+ *        -1 on error
+*/
 int llread(unsigned char *packet) {
-
-    //printf("Entering llread\n");
-
-    if (packet == NULL) {
-        return -1;
-    }
+    if (packet == NULL) return -1;
 
     int state = START;
     char* dataFrame = (char *)malloc(sizeof(char)); // The data from the information frame will be stored here.
     int currentDataFrameIt = 0;
+    char receivedCField = 0x00;
 
     while (state != STOP_STATE) {
         char byte = 0;
         int rb = 0;
-
         if ((rb = readByte(&byte)) == -1) return -1;
-        if (rb == 0) {
-            //printf("rb is 0\n");
-            continue;
-        }
-        int controlField = controlType ? I_FRAME_1 : I_FRAME_0;
-
+        if (rb == 0) continue;
+    
         switch (state) {
             case START:
-                //printf("HERE START\n");
+                //printf("HERE START\n"); // TODO: Remove (DEBUG)
                 if (byte == FLAG) state = FLAG_RCV;
                 break;
             case FLAG_RCV:
-                //printf("HERE IN FLAG_RCV\n");
+                //printf("HERE IN FLAG_RCV\n"); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
                 break;
             case A_RCV:
-                //printf("HERE IN ARCV\n");
-                state = byte == FLAG ? FLAG_RCV : (byte == controlField ? C_RCV : START);
-
-                if ((byte == I_FRAME_0 && controlType) || (byte == I_FRAME_1 && !controlType)) {
-
-                    printf("READY TO SEND ACK\n");
-                    sendAck(!controlType); // We want to send the old acknowledgment.
-                    printf("SENT ACK\n");
-                    state = STOP_STATE;
-                    currentDataFrameIt = 0;
-                    free(dataFrame);
-                    return 0; // Duplicate was found, we have a total of 0 bytes
-                }
-
+                //printf("HERE IN ARCV\n"); // TODO: Remove (DEBUG)
+                receivedCField = byte;
+                printf("Received C Field: %x\n", receivedCField); // TODO: Remove (DEBUG)
+                if (byte == FLAG) state = FLAG_RCV;
+                else if ((byte == I_FRAME_0) || (byte == I_FRAME_1)) state = C_RCV;
+                else state = START;
                 break;
             case C_RCV:
-                printf("HERE IN CRCV\n");
-                char BCC1 = ADDRESS_SENT_BY_TX ^ controlField;
+                //printf("HERE IN CRCV\n"); // TODO: Remove (DEBUG)
+                char BCC1 = ADDRESS_SENT_BY_TX ^ receivedCField;
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
-                //printf("HERE IN BCCOK\n");
+                //printf("HERE IN BCCOK\n"); // TODO: Remove (DEBUG)
                 dataFrame[currentDataFrameIt] = byte;
                 currentDataFrameIt++;
                 dataFrame = (char*)realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(char));
 
                 if (dataFrame == NULL) return -1;
 
+                // When byte is equal to flag -> Stop
                 if (byte == FLAG){
-                    printf("FOUND FLAG FOUND FLAGGGGGGG\n");
+                    printf("FOUND FLAG FOUND FLAGGGGGGG\n"); // TODO: Remove (DEBUG)
                     state = CHECK_DATA;
                 } 
-                // gets first byte...
-                // gets next byte ...
-                // gets n byte ...
 
-                // when byte is equal to flag -> Stop.
+                
         }
 
-    
         if (state == CHECK_DATA) {
             int data_bcc2_flag_size = currentDataFrameIt;
-
             char* actualData = (char*)malloc(sizeof(char));
             int actualDataIt = 0;
             int sizeOfActualData = 1;
-
             int expectDestuffing = FALSE;
-            for (int i = 0; i < (data_bcc2_flag_size - 2); i++) { // Byte destuffing
-                printf("WE ARE INSIDE THE CHECK DATA DESTUF\n");
-                if (expectDestuffing) {
+            for (int i = 0; i < (data_bcc2_flag_size - 1); i++) { // Byte destuffing // TODO: Change -2 to -1, after BCC2 stuffing
 
-                    if (((dataFrame[i] ^ ESCAPE_XOR) == ESCAPE_OCTET) || ((dataFrame[i] ^ ESCAPE_XOR) == FLAG)) { // Then we are really suppost to do destuffing
-                        actualData[actualDataIt] = dataFrame[i] ^ ESCAPE_XOR;
-                    } else {
-                        // TODO: REMOVE
-                        printf("else case\n");
-
-                        // Add previous byte... our expectations were not correct
-                        actualData[actualDataIt] = ESCAPE_OCTET;
-                        actualDataIt++;
-                        sizeOfActualData++;
-                        actualData = (char*)realloc(actualData, sizeOfActualData * sizeof(char));
-                        if (actualData == NULL) return -1;
-
-                        // Add current byte
-                        actualData[actualDataIt] = dataFrame[i];
-                    }
-
-                    actualDataIt++;
+                if (actualDataIt != 0) {
                     sizeOfActualData++;
                     actualData = (char*)realloc(actualData, sizeOfActualData * sizeof(char));
-                    if (actualData == NULL) return -1;
-                    expectDestuffing = FALSE;
-                    continue;
                 }
-                
-                if (dataFrame[i] == ESCAPE_OCTET) {
-                    expectDestuffing = TRUE;
-                    continue;
-                } else {
+
+                if (dataFrame[i] != ESCAPE_OCTET) {
                     actualData[actualDataIt] = dataFrame[i];
                     actualDataIt++;
-                    sizeOfActualData++;
-                    actualData = (char*)realloc(actualData, sizeOfActualData * sizeof(char));
-                    if (actualData == NULL) return -1;
+                } else {
+                    // We know that the current byte is not to be added
+                    // And we take the next byte, xor it and add it to the actualData
+                    if (i + 1 > (data_bcc2_flag_size - 1)) {
+                        printf("%s: An error occurred inside the byte destuffing.\n", __func__);
+                        return -1;
+                    }
+                    i++;
+                    actualData[actualDataIt] = (dataFrame[i] ^ ESCAPE_XOR);
+                    actualDataIt++;
                 }
+
+               // 1 - We have a byte that is the escape octet
+               // 2 - We have a byte that is not the escape octet
             }
 
             // Check BCC2
             // FIXME: What if BCC2 is equal to FLAG?
             char dataAccm = 0x00;
 
+            //printf("VALUEE OF SIZEOFACTUALDATA %d\n", actualDataIt); // TODO: Remove (DEBUG)
 
-
-            for (int i = 0; i < sizeOfActualData; i++) {
+            /* for (int i = 0; i < actualDataIt; i++) {
                 printf("%x", actualData[i]);  // EXOR all the destuffed data bytes
-            }
+            } */ // TODO: Remove (DEBUG)
 
-
-            // FIXME:::::: XOR IS INVALID ??????????
+            // FIXME: XOR IS INVALID ??????????
             // FIXME: XOR MAY NOT BE INVALID ? FIND OUT WHERE 2C came from ?????
-
-            for (int i = 0; i < sizeOfActualData; i++) {
+            //if (sizeOfActualData > 1) actualData = (char*)realloc(actualData, (sizeOfActualData - 1) * sizeof(char)); // Resize actual data (to remove BCC2)
+            for (int i = 0; i < sizeOfActualData-1; i++) {
                 dataAccm ^= actualData[i];  // EXOR all the destuffed data bytes
             }
 
-            
-
-            if (dataAccm != dataFrame[data_bcc2_flag_size - 2] || sizeOfActualData > MAX_PAYLOAD_SIZE) { // If dataAccm is not the same as BCC2, something went wrong
-
-                printf("XOOOOOOOOOOOOORRRRRRRRRRRRR INNNNNNVALIIIIIIID %.2x\n", dataFrame[data_bcc2_flag_size - 2]);
-                exit(1);
+            // Case - XOR is invalid or the data is too big (Reject)
+            printf("sizeOFActualdata: %d\n", sizeOfActualData);
+            if (dataAccm != actualData[actualDataIt-1] || (sizeOfActualData-1) > MAX_PAYLOAD_SIZE) { // If dataAccm is not the same as BCC2, something went wrong
+                printf("XOR INVALID, EXPECTED %.2x BUT GOT %.2x.\n", actualData[actualDataIt-1], dataAccm); // TODO: Remove (DEBUG)
 
                 char REJ = 0x00;
+                if (prevCField == 0) REJ = CONTROL_REJ0;
+                else REJ = CONTROL_REJ1;
 
-                if (!controlType) {
-                    REJ = CONTROL_REJ0;
-                } else {
-                    REJ = CONTROL_REJ1;
-                }
-
-                char BCC1 = REJ ^ ADDRESS_SENT_BY_TX;
+                char BCC1 = REJ ^ ADDRESS_SENT_BY_TX; 
 
                 // SEND NACK
                 char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, REJ, BCC1, FLAG};
@@ -565,28 +547,27 @@ int llread(unsigned char *packet) {
                 actualData = (char*)malloc(sizeof(char));
                 actualDataIt = 0;
                 sizeOfActualData = 1;
-
-
-            } else {
-
-                printf("After destuffing\n");
-                for (int i = 0; i < actualDataIt; i++) {
-
-                    printf("Bytes are %.2x\n",(unsigned char)actualData[i] );
-
-                    packet[i] = (unsigned char)actualData[i]; 
+            } else { 
+                // Case - Frame is a duplicate (Accept and discard)
+                if (prevCField == receivedCField){
+                    printf("Frame is duplicate\n");
+                    sendAck(receivedCField); 
+                    free(dataFrame);
+                    free(actualData);
+                    return 0;
                 }
 
-                controlType = !controlType; // Frame was correctly received, tell Tx we want the next one.
-
-                sendAck(controlType); // Use normal control type. Not inverted.
-
-                state = START;
-            
-                state = STOP_STATE;
-            
-                return actualDataIt;
+                // Case - Frame accepted (Accept)
+                for (int i = 0; i < sizeOfActualData; i++) {
+                    //printf("Bytes are %.2x\n",(unsigned char)actualData[i] ); // TODO: Remove (DEBUG)
+                    //if (i > 3) printf("%.2x ",(unsigned char)actualData[i] ); // TODO: Remove (DEBUG)
+                    packet[i] = (unsigned char)actualData[i]; 
+                }
+                sendAck(receivedCField); 
+                printf("Frame accepted\n");
+                return sizeOfActualData;
             }
+            // 3 - Reads same frame again (prevCField + discard frame)
         }
     }
 
@@ -617,7 +598,7 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
                         return -1;
                     }
                 }
-                sleep(1); // Wait until all bytes have been written to the serial port
+                //sleep(1); // Wait until all bytes have been written to the serial port // TODO: Remove
             }
 
             if (bytesWritten == 5) { //FIXME: DISABLE ALARM
@@ -639,10 +620,11 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
         }
 
     } else if (role == LlRx) { // Receiver
+        printf("RX entered llclose()\n");
         int enterCheckSUFrame = TRUE;
         while (enterCheckSUFrame) {
 
-            int csu = checkSUFrame(CONTROL_DISC, &alarmEnabled);
+            int csu = checkSUFrame(CONTROL_DISC, &enterCheckSUFrame);
             if (csu == -1) {
                 return -1;
             }

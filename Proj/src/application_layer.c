@@ -21,18 +21,19 @@ unsigned char* fName = (unsigned char*)"Penguin.gif";
 #define CEND 3
 
 // Definitions for Data Packets
-#define partitionSize 500
+#define partitionSize 996
 unsigned char sequenceNumber = 0;  // Between 0 and 99
 
-/*
-    Creates a control packet (start or end)
-    controlPacket - array to which the packet is written to
-    currentSize - current size of the control packet (while it is being written to)
-    cpt - should have values CSTART or CEND (start or end control packet)
-    fileSize - size of the file to be sent
-    fileName - name of the file to be sent
-    returns a controlPacket on success 
-            NULL on error
+
+/**
+ * Creates a control packet (start or end)
+ * controlPacket - array to which the packet is written to
+ * currentSize - current size of the control packet (while it is being written to)
+ * cpt - should have values CSTART or CEND (start or end control packet)
+ * fileSize - size of the file to be sent
+ * fileName - name of the file to be sent
+ * returns a controlPacket on success 
+ *         NULL on error
 */
 unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSize, int cpt, long fileSize, unsigned char* fileName) {
     if (controlPacket == NULL) return NULL;
@@ -46,57 +47,23 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
     // TLV coded long
     printf("\nPlease remove me - DEBUG: In the current architecture long is %ld bytes long.\n", sizeof(long)); // TODO: Remove (DEBUG)
 
-    /* #if defined(__x86_64__) || defined(_M_X64) || defined(__ppc64__) || defined(__aarch64__)    
-
-        char byteData[8];
-        byteData[0] = (fileSize >> 56) & 0xFF; // Most significant byte
-        byteData[1] = (fileSize >> 48) & 0xFF;
-        byteData[2] = (fileSize >> 40) & 0xFF;
-        byteData[3] = (fileSize >> 32) & 0xFF;
-        byteData[4] = (fileSize >> 24) & 0xFF;
-        byteData[5] = (fileSize >> 16) & 0xFF;
-        byteData[6] = (fileSize >> 8) & 0xFF;
-        byteData[7] = fileSize & 0xFF; // Least significant byte
-
-        for (int i = 0; i < 8; i++) {
-
-            // Type
-            (*currentSize)++;
-            controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-            controlPacket[(*currentSize) - 1] = 0; // Filesize
-
-            
-            // Length
-            (*currentSize)++;
-            controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-            controlPacket[(*currentSize) - 1] = 8;
-
-            // Value
-            (*currentSize)++;
-            controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-            controlPacket[(*currentSize) - 1] = byteData[i];
-
-        }
-
-    #elif defined(__i386__) || defined(_M_IX86) || defined(__ppc__) || defined(__arm__) */
     char byteData[4];
     byteData[0] = (fileSize >> 24) & 0xFF; // Most significant byte
     byteData[1] = (fileSize >> 16) & 0xFF;
     byteData[2] = (fileSize >> 8) & 0xFF;
     byteData[3] = fileSize & 0xFF; // Least significant byte
 
-    for (int i = 0; i < 4; i++) {
-        // Type
-        (*currentSize)++;
-        controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-        controlPacket[(*currentSize) - 1] = 0; // Filesize
-        printf("HEY IM TRYING TO SCHLEEP AAAAAAAAAAA %d\n", ((*currentSize) - 1)); // TODO: Remove (DEBUG)
-        
-        // Length
-        (*currentSize)++;
-        controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-        controlPacket[(*currentSize) - 1] = 4;
+    // Type 
+    (*currentSize)++;
+    controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
+    controlPacket[(*currentSize) - 1] = 0; // Filesize
 
+    // Length
+    (*currentSize)++;
+    controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
+    controlPacket[(*currentSize) - 1] = 4;
+
+    for (int i = 0; i < 4; i++) {
         // Value
         (*currentSize)++;
         controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
@@ -104,19 +71,21 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
     }
 
     // TLV coded filename
-    int fileNameSize = (sizeof(fName) / sizeof(unsigned char));
+    int fileNameSize = (int)strlen((const char*) fName);
+
+    // Type
+    (*currentSize)++;
+    controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
+    controlPacket[(*currentSize) - 1] = 1; // Filename
+    
+    // Length
+    (*currentSize)++;
+    controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
+    controlPacket[(*currentSize) - 1] = fileNameSize;
+
     printf("\nPlease remove me - DEBUG: Filename is %d bytes long.\n", fileNameSize); // TODO: Remove (DEBUG)
     for (int i = 0; i < fileNameSize; i++) {
-        // Type
-        (*currentSize)++;
-        controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-        controlPacket[(*currentSize) - 1] = 1; // Filename
         
-        // Length
-        (*currentSize)++;
-        controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-        controlPacket[(*currentSize) - 1] = fileNameSize;
-
         // Value
         (*currentSize)++;
         controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
@@ -126,14 +95,14 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
 }
 
 
-/*
-    Creates a data packet according to the specification
-    dataPacket[] - data packet array to be written
-    currentSize - size of the data packet to be written
-    fd - file descriptor
-    returns 1 on ...  // TODO: Is this true?
-            0 if no bytes are read (nothing left to read)
-           -1 on error
+/**
+ * Creates a data packet according to the specification
+ * dataPacket[] - data packet array to be written
+ * currentSize - size of the data packet to be written
+ * fd - file descriptor
+ * returns 1 on ...  // TODO: Is this true?
+ *         0 if no bytes are read (nothing left to read)
+ *        -1 on error
 */
 int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
     unsigned int accumulatorOfBytesRead = 0;
@@ -157,19 +126,13 @@ int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
     (*dataPacket)[(*currentSize) - 1] = sequenceNumber; // TODO: Deixar assim?
     
     // Need to subdivide the file into smaller parts (Each packet has data with partitionSize bytes)
-    for (int i = 0; i <= partitionSize; i++) {
+    for (int i = 0; i < partitionSize; i++) {
         int readBytes = read((*fd), &byte, 1);
-
-        if (readBytes == -1) {
-            return -1;
-        }
-
-        if (readBytes == 0) {
-            return 0;
-        }
+        if (readBytes == -1) return -1;
+        if (readBytes == 0) break;
 
         accumulatorOfBytesRead++;
-
+ 
         (*currentSize)++;
         (*dataPacket) = (unsigned char*)realloc((*dataPacket), (*currentSize) * sizeof(unsigned char));
         (*dataPacket)[(*currentSize) - 1] = byte;
@@ -178,6 +141,8 @@ int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
     // K = 256 * L2 + L1
     int L2 = accumulatorOfBytesRead / 256;
     int L1 = accumulatorOfBytesRead - (L2 * 256);
+
+    if (L2 == 0 && L1 == 0) return 0;
 
     (*dataPacket)[2] = L2;
     (*dataPacket)[3] = L1;
@@ -202,9 +167,7 @@ int llwriteWrapper(unsigned char* packet, int sizeOfPacket) {
         if (bytesWritten == -1) return -1;
         if (bytesWritten == 0) continue;
         printf("EXPECTED %x BUT BYTES WRITTEN WERE %x\n", sizeOfPacket, bytesWritten);
-        if (bytesWritten == sizeOfPacket){
-            return 0;
-        }
+        if (bytesWritten == sizeOfPacket) return 0;
     }
     return 0;
 }
@@ -307,94 +270,94 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
 }
 
 
-/*
-    Reads and Checks control packets. 
-    fileSize - size of the file to be read
-    returns 0 on success
-           -1 on error
+/**
+ * Reads and Checks control packets. 
+ * fileSize - size of the file to be read
+ * returns 0 on success
+ *        -1 on error
 */
-int readControlPacket(long* fileSize, unsigned char* filename[], int type) {
-    unsigned char* controlPacket = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char));
-    int bytesRead = llread(controlPacket);
-    if (bytesRead == -1){
-        printf("%s: Error in llread\n", __func__);
+int readControlPacket(unsigned char* controlPacket, long* fileSize, unsigned char* filename, int type) {
+    //unsigned char* controlPacket1 = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char)); // TODO: Remove 
+
+    if (type != CEND) {
+        int bytesRead = llread(controlPacket);
+        if (bytesRead == -1){
+            printf("%s: Error in llread\n", __func__);
+            return -1;
+        }
+    }
+
+    printf("controlPacket[0]: %d\n", (controlPacket[0]));
+    printf("controlPacket[1]: %d\n", (controlPacket[1]));
+    printf("controlPacket[2]: %d\n", (controlPacket[2]));
+
+    //if (bytesRead == 0) printf("llread returned zero\n"); TODO: Remove me
+
+    // Check if the control packet is correct
+    if ((controlPacket[0]) != type) {
+        printf("%s: Error in controlPacketType\n", __func__);
+        printf("Expected %x but got %d\n", type, controlPacket[0]);
+        return -1;
+    } 
+    
+    //printf("\nPlease check the architecture for the size of long\n"); // TODO: Remove (DEBUG)
+
+    // Check Filesize
+    // Type
+    if ((controlPacket[1]) != 0) {
+            printf("%s: Error in Type of TLV.\n", __func__);
+            printf("Expected 0 got %d\n", controlPacket[1]);
+            return -1; // We are expecting a filesize...
+    }
+
+    // Length
+    char readTLVmax = 4; // TODO: Make it work for other architectures too
+    char byteData[4];
+    if (controlPacket[2] != (unsigned char)readTLVmax) { // Filesize cannot be longer than an long...
+        printf("%s: The length value for filesize is invalid.\n", __func__);
         return -1;
     }
-    //for (int i = 0; i < bytesRead; i++) {
-    if (controlPacket[0] != type) {
-        printf("%s: Error in controlPacketType\n", __func__);
-        return -1;
-    } // Check if the control packet is correct
     
+    int offset = 3;
 
-    printf("\nPlease check the architecture for the size of long\n"); // TODO: Remove me.
+    // Value
+    for (int i = 0; i < readTLVmax; i++) {
+        byteData[i] = controlPacket[3 + i];
+        offset++;
+    }
 
-    /* #if defined(__x86_64__) || defined(_M_X64) || defined(__ppc64__) || defined(__aarch64__)
-        char byteData[8]; // This is where the bytes for the long value will be stored.
-        char readTLVmax = 8;
-        for (char i = 0; i < readTLVmax; i++) {
+    (*fileSize) = 0;
+    (*fileSize) |= (unsigned char)byteData[0] << 24;
+    (*fileSize) |= (unsigned char)byteData[1] << 16;
+    (*fileSize) |= (unsigned char)byteData[2] << 8;
+    (*fileSize) |= (unsigned char)byteData[3];
+    
+    // Check Filename
+    // Type
+    if (controlPacket[offset] != 1) {
+            printf("%s: Error in Type of TLV.\n", __func__);
+            printf("Expected 1 got %d\n", controlPacket[1]);
+            return -1; // We are expecting a filesize...
+    }
 
-            // Type
-            if (controlPacket[1 + i] != 0) return -1; // We are expecting a filesize...
+    // Length
+    offset++;
+    int filenameSize = controlPacket[offset];
 
-            
-            // Length
-            if (((size_t)controlPacket[2 + i]) > sizeof(long) || controlPacket[2 + i] != (unsigned char)readTLVmax) { // Filesize cannot be longer than an long...
-                printf("%s: The length value for filesize is invalid.\n", __func__);
-                return -1;
-            }
+    filename = (unsigned char*)realloc(filename, filenameSize * sizeof(unsigned char));
 
-            // Value
-            byteData[i] = controlPacket[3 + i];
-
-        }
-        
-        (*fileSize) = 0;
-
-        (*fileSize) |= (unsigned char)byteData[0] << 56;
-        (*fileSize) |= (unsigned char)byteData[1] << 48;
-        (*fileSize) |= (unsigned char)byteData[2] << 40;
-        (*fileSize) |= (unsigned char)byteData[3] << 32;
-        (*fileSize) |= (unsigned char)byteData[4] << 24;
-        (*fileSize) |= (unsigned char)byteData[5] << 16;
-        (*fileSize) |= (unsigned char)byteData[6] << 8;
-        (*fileSize) |= (unsigned char)byteData[7];
-    #elif defined(__i386__) || defined(_M_IX86) || defined(__ppc__) || defined(__arm__) */
-        char byteData[4];
-        char readTLVmax = 4;
-        for (int i = 0; i < readTLVmax; i++) {
-
-            printf("Value of T(1) is %x\n", controlPacket[1]);
-            printf("Value of T(1+i) is %x\n", controlPacket[1+i]);
-            // Type
-            if (controlPacket[1 + (i * 3)] != 0) {
-                printf("%s: Error in Type of TLV.\n", __func__);
-                printf("Expected 0 got %d\n", controlPacket[1+i]);
-                return -1; // We are expecting a filesize...
-            }
-
-            // Length
-            if (((size_t)controlPacket[2 + (i * 3)]) > sizeof(long) || controlPacket[2 + (i * 3)] != (unsigned char)readTLVmax) { // Filesize cannot be longer than an long...
-                printf("%s: The length value for filesize is invalid.\n", __func__);
-                return -1;
-            }
-
-            // Value
-            byteData[i] = controlPacket[3 + (i * 3)];
-        }
-
-        (*fileSize) = 0;
-
-        (*fileSize) |= (unsigned char)byteData[0] << 24;
-        (*fileSize) |= (unsigned char)byteData[1] << 16;
-        (*fileSize) |= (unsigned char)byteData[2] << 8;
-        (*fileSize) |= (unsigned char)byteData[3];
-    /* #else
-        printf("%s: Unknown architecture\n", __func__);
+    if (filenameSize < 1) {
+        printf("%s: Error in controlPacket, filenameSize is less than one\n", __func__);
         return -1;
-    #endif */
+    }
 
-    free(controlPacket);
+    // Value
+    offset++;
+    for (int i = 0; i < filenameSize; i++) { 
+        filename[i] = controlPacket[offset + i]; 
+    }
+    filename[filenameSize] = '\0'; // FIXME: Do we need to add '\0'
+    
     return 0;
 }
 
@@ -404,10 +367,10 @@ int readControlPacket(long* fileSize, unsigned char* filename[], int type) {
  * fd - file descriptor of the new file
  * fileSize - size of the new file
  * fileName - name of the received file
- * returns 0 on success
+ * returns number of bytes read on success
  *        -1 on error
 */
-int readDataPacket(int* fd, long* fileSize, unsigned char* fileName[]) {
+int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
     int continueReadingBytes = 1;
     long totalAmountRead = 0;
     while (continueReadingBytes){
@@ -418,20 +381,19 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName[]) {
         readBytes = llread(dataPacket);
         //printf("HEY! HI! HELLO!\n"); // TODO: Remove (DEBUG)
 
-        if (readBytes == 0) continue;
-
+        if (readBytes == 0) continue; // Nothing left to read
         if (readBytes == -1) {
             printf("%s: An error occurred in llread.\n", __func__);
             return -1;
         }
 
+        printf("Packet type: %d\n", dataPacket[0]);
         if (dataPacket[0] == CEND){
-
-            if (readControlPacket(fileSize, fileName, CEND) != 0) {
+            printf("Calling readControlPacket.\n"); // TODO: Remove (DEBUG)
+            if (readControlPacket(dataPacket, fileSize, fileName, CEND) != 0) {
                 printf("%s: Error in readControlPacket.\n", __func__);
                 return -1;
             }
-
             return 0;
         }
 
@@ -442,14 +404,20 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName[]) {
         int l1 = dataPacket[3];
         int l2 = dataPacket[2];
         int k = 256 * l2 + l1;
+
+        if (k == 0 && dataPacket[0] == CDATA) return 0;
+
+        printf("k: %d\n", k); // TODO: Remove (DEBUG)
         int bytesWritten = 0;
-        bytesWritten = write((*fd), dataPacket + sizeof(unsigned char) * 4 , k); // FIXME: Is this correct?
-        //bytesWritten = write((*fd), dataPacket + 4, k); // FIXME: Should it be like this?
+        //bytesWritten = write((*fd), dataPacket + sizeof(unsigned char) * 4 , k); // FIXME: Is this correct?
+        bytesWritten = write((*fd), dataPacket + 4, k); // FIXME: Should it be like this?
 
         if (bytesWritten == -1) {
             printf("%s: An error occurred while writing to the file.\n", __func__);
             return -1;
         }
+
+        free(dataPacket);
     }
     return totalAmountRead;
 }
@@ -468,26 +436,37 @@ int rxApplication(LinkLayer linkStruct) {
         return -1;
     }
 
-    printf("RX is connected up successfully\n"); // TODO: Remove (DEBUG)
+    //printf("RX is connected up successfully\n"); // TODO: Remove (DEBUG)
 
     // Read the start control packet
+    unsigned char* controlPacket = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char));
     long fileSize;
-    unsigned char* fileName = (unsigned char*)malloc(sizeof(unsigned char) * 10); //FIXME: Define a maximum size for filename. Also... Does this work? ** || *[]
-    if (readControlPacket(&fileSize, &fileName, CSTART) != 0) { 
+    unsigned char* fileName = (unsigned char*)malloc(sizeof(unsigned char)); //FIXME: Define a maximum size for filename. Also... Does this work? ** || *[]
+    if (readControlPacket(controlPacket, &fileSize, fileName, CSTART) != 0) { 
         printf("%s: Error in readControlPacket.\n", __func__);
         return -1;
     }
     
     // Create file
-    int fd = open("XiaomiPinguin.gif", O_CREAT | O_RDWR); // FIXME: Use filename
+    int fd = open(fileName, O_WRONLY | O_APPEND | O_CREAT, 777); // FIXME: Use filename
     if (fd < 0) {
         printf("Unable to open file.\n");
         return -1;
     }
 
     // Read data packets
-    if (readDataPacket(&fd, &fileSize, &fileName) < 0) {
+    if (readDataPacket(&fd, &fileSize, fileName) < 0) {
         printf("%s: Error while reading data packet.\n", __func__);
+        return -1;
+    }
+
+    free(controlPacket);
+    //printf("After freeing controlPacket\n");
+
+
+    // Close the connection
+    if (llclose(1) != 1){ // TODO: Change the argument
+        printf("%s: An error ocurred inside llclose.\n", __func__);
         return -1;
     }
 
