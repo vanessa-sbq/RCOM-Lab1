@@ -14,8 +14,6 @@
 #define CtrlPacketStart 1
 #define CtrlPacketEnd 3
 
-unsigned char* fName = (unsigned char*)"Penguin.gif"; 
-
 #define CSTART 1
 #define CDATA 2
 #define CEND 3
@@ -35,7 +33,7 @@ unsigned char sequenceNumber = 0;  // Between 0 and 99
  * returns a controlPacket on success 
  *         NULL on error
 */
-unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSize, int cpt, long fileSize, unsigned char* fileName) {
+unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSize, int cpt, long fileSize, const unsigned char* fileName) {
     if (controlPacket == NULL) return NULL;
     
     if (cpt == CSTART) controlPacket[0] = CSTART; // Dealing with a Start Control Packet.
@@ -45,8 +43,6 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
     }
 
     // TLV coded long
-    printf("\nPlease remove me - DEBUG: In the current architecture long is %ld bytes long.\n", sizeof(long)); // TODO: Remove (DEBUG)
-
     char byteData[4];
     byteData[0] = (fileSize >> 24) & 0xFF; // Most significant byte
     byteData[1] = (fileSize >> 16) & 0xFF;
@@ -71,7 +67,7 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
     }
 
     // TLV coded filename
-    int fileNameSize = (int)strlen((const char*) fName);
+    int fileNameSize = (int)strlen((const char*) fileName);
 
     // Type
     (*currentSize)++;
@@ -83,13 +79,11 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
     controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
     controlPacket[(*currentSize) - 1] = fileNameSize;
 
-    printf("\nPlease remove me - DEBUG: Filename is %d bytes long.\n", fileNameSize); // TODO: Remove (DEBUG)
+    //Value
     for (int i = 0; i < fileNameSize; i++) {
-        
-        // Value
         (*currentSize)++;
         controlPacket = (unsigned char*)realloc(controlPacket, (*currentSize) * sizeof(unsigned char));
-        controlPacket[(*currentSize) - 1] = fName[i];
+        controlPacket[(*currentSize) - 1] = fileName[i];
     }
     return controlPacket;
 }
@@ -100,7 +94,7 @@ unsigned char* createControlPacket(unsigned char* controlPacket, int* currentSiz
  * dataPacket[] - data packet array to be written
  * currentSize - size of the data packet to be written
  * fd - file descriptor
- * returns 1 on ...  // TODO: Is this true?
+ * returns 1 on success
  *         0 if no bytes are read (nothing left to read)
  *        -1 on error
 */
@@ -118,12 +112,12 @@ int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
     // L2
     (*currentSize)++;
     (*dataPacket) = (unsigned char*)realloc((*dataPacket), (*currentSize) * sizeof(unsigned char));
-    (*dataPacket)[(*currentSize) - 1] = sequenceNumber; // TODO: Deixar assim?
+    (*dataPacket)[(*currentSize) - 1] = 0x00;
 
     // L1
     (*currentSize)++;
     (*dataPacket) = (unsigned char*)realloc((*dataPacket), (*currentSize) * sizeof(unsigned char));
-    (*dataPacket)[(*currentSize) - 1] = sequenceNumber; // TODO: Deixar assim?
+    (*dataPacket)[(*currentSize) - 1] = 0x00;
     
     // Need to subdivide the file into smaller parts (Each packet has data with partitionSize bytes)
     for (int i = 0; i < partitionSize; i++) {
@@ -147,26 +141,22 @@ int createDataPacket(unsigned char* dataPacket[], int* currentSize, int* fd) {
     (*dataPacket)[2] = L2;
     (*dataPacket)[3] = L1;
 
-    sequenceNumber = sequenceNumber == (unsigned char)99 ? 0 : sequenceNumber + 1;
-    return 1; // TODO: Should this be 1?
+    return 1;
 }
 
 
-// FIXME: This function needs to have a limit
 /**
  * This function only exits when a successful write is done.
  * This means that it will only return if we are able to write the full data.
  * packet - packet to be sent
  * sizeOfPacket - size of packet to be sent
- * returns 0 on success
+ * returns number of bytes written on success
  *        -1 on error
 */
 int llwriteWrapper(unsigned char* packet, int sizeOfPacket) {
-
     int bytesWritten = llwrite(packet, sizeOfPacket);
     if (bytesWritten == -1) return -1;
     return bytesWritten;
-
 }
 
 
@@ -179,7 +169,7 @@ int llwriteWrapper(unsigned char* packet, int sizeOfPacket) {
 */
 int txApplication(LinkLayer linkStruct, const char* filename) {
     // Open file
-    int fd = open(filename, O_RDONLY);
+    int fd = open((const char *)filename, O_RDONLY);
     if (fd < 0) {
         printf("Unable to open file.\n");
         return -1;
@@ -199,12 +189,10 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
         return -1;
     }
 
-    printf("TX is connected up successfully\n");  // TODO: Remove (DEBUG)
-
     // Create the initial control packet
     unsigned char* controlPacket = (unsigned char*)malloc(sizeof(unsigned char));
     int sizeOfControlPacket = 1;
-    controlPacket = createControlPacket(controlPacket, &sizeOfControlPacket, CSTART, fileSize, fName);
+    controlPacket = createControlPacket(controlPacket, &sizeOfControlPacket, CSTART, fileSize, (const unsigned char*)filename);
     if (controlPacket == NULL) {
         printf("%s: An error occurred while trying to create the Control Packet.\n", __func__);
         return -1;
@@ -249,12 +237,13 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
             return 0;
         }
 
+        sequenceNumber = sequenceNumber == (unsigned char)99 ? 0 : sequenceNumber + 1;
 
         free(dataPacket);
     }
     
     // Create the the end control packet
-    controlPacket = createControlPacket(controlPacket, &sizeOfControlPacket, CEND, fileSize, fName);
+    controlPacket = createControlPacket(controlPacket, &sizeOfControlPacket, CEND, fileSize, filename);
     if (controlPacket == NULL) {
         printf("%s: An error occurred while trying to create the END Control Packet.\n", __func__);
         return -1;
@@ -289,8 +278,6 @@ int txApplication(LinkLayer linkStruct, const char* filename) {
  *        -1 on error
 */
 int readControlPacket(unsigned char* controlPacket, long* fileSize, unsigned char* filename, int type) {
-    //unsigned char* controlPacket1 = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char)); // TODO: Remove 
-
     if (type != CEND) {
         int bytesRead = llread(controlPacket);
         if (bytesRead == -1){
@@ -299,33 +286,23 @@ int readControlPacket(unsigned char* controlPacket, long* fileSize, unsigned cha
         }
     }
 
-    printf("controlPacket[0]: %d\n", (controlPacket[0]));
-    printf("controlPacket[1]: %d\n", (controlPacket[1]));
-    printf("controlPacket[2]: %d\n", (controlPacket[2]));
-
-    //if (bytesRead == 0) printf("llread returned zero\n"); TODO: Remove me
-
     // Check if the control packet is correct
     if ((controlPacket[0]) != type) {
         printf("%s: Error in controlPacketType\n", __func__);
-        printf("Expected %x but got %d\n", type, controlPacket[0]);
         return -1;
-    } 
-    
-    //printf("\nPlease check the architecture for the size of long\n"); // TODO: Remove (DEBUG)
+    }
 
     // Check Filesize
     // Type
     if ((controlPacket[1]) != 0) {
             printf("%s: Error in Type of TLV.\n", __func__);
-            printf("Expected 0 got %d\n", controlPacket[1]);
             return -1; // We are expecting a filesize...
     }
 
     // Length
-    char readTLVmax = 4; // TODO: Make it work for other architectures too
+    char readTLVmax = 4;
     char byteData[4];
-    if (controlPacket[2] != (unsigned char)readTLVmax) { // Filesize cannot be longer than an long...
+    if (controlPacket[2] != (unsigned char)readTLVmax) {
         printf("%s: The length value for filesize is invalid.\n", __func__);
         return -1;
     }
@@ -348,7 +325,6 @@ int readControlPacket(unsigned char* controlPacket, long* fileSize, unsigned cha
     // Type
     if (controlPacket[offset] != 1) {
             printf("%s: Error in Type of TLV.\n", __func__);
-            printf("Expected 1 got %d\n", controlPacket[1]);
             return -1; // We are expecting a filesize...
     }
 
@@ -368,7 +344,7 @@ int readControlPacket(unsigned char* controlPacket, long* fileSize, unsigned cha
     for (int i = 0; i < filenameSize; i++) { 
         filename[i] = controlPacket[offset + i]; 
     }
-    filename[filenameSize] = '\0'; // FIXME: Do we need to add '\0'
+    filename[filenameSize] = '\0'; 
     
     return 0;
 }
@@ -389,9 +365,7 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
         unsigned char* dataPacket = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char));
         int readBytes = 0;
 
-        //printf("WALKING THROUGH THE ROOM\n");  // TODO: Remove (DEBUG)
         readBytes = llread(dataPacket);
-        //printf("HEY! HI! HELLO!\n"); // TODO: Remove (DEBUG)
 
         if (readBytes == 0) continue; // Nothing left to read
         if (readBytes == -1) {
@@ -399,9 +373,7 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
             return -1;
         }
 
-        printf("Packet type: %d\n", dataPacket[0]);
         if (dataPacket[0] == CEND){
-            printf("Calling readControlPacket.\n"); // TODO: Remove (DEBUG)
             if (readControlPacket(dataPacket, fileSize, fileName, CEND) != 0) {
                 printf("%s: Error in readControlPacket.\n", __func__);
                 return -1;
@@ -409,9 +381,15 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
             return 0;
         }
 
-        totalAmountRead += readBytes - 4;
+        totalAmountRead += readBytes - 4; // Remove the bytes for header.
  
-        // TODO: Use S (serial number)
+        // Sequence number check.       
+        if (dataPacket[1] != sequenceNumber){
+            printf("%s: Unknown error occurred, malformed data packet, sequence number invalid\n", __func__);
+            return -1;
+        }
+
+        sequenceNumber = sequenceNumber == (unsigned char)99 ? 0 : sequenceNumber + 1;
 
         int l1 = dataPacket[3];
         int l2 = dataPacket[2];
@@ -419,10 +397,8 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
 
         if (k == 0 && dataPacket[0] == CDATA) return 0;
 
-        printf("k: %d\n", k); // TODO: Remove (DEBUG)
         int bytesWritten = 0;
-        //bytesWritten = write((*fd), dataPacket + sizeof(unsigned char) * 4 , k); // FIXME: Is this correct?
-        bytesWritten = write((*fd), dataPacket + 4, k); // FIXME: Should it be like this?
+        bytesWritten = write((*fd), dataPacket + 4, k);
 
         if (bytesWritten == -1) {
             printf("%s: An error occurred while writing to the file.\n", __func__);
@@ -441,43 +417,42 @@ int readDataPacket(int* fd, long* fileSize, unsigned char* fileName) {
  * returns 0 on success
  *        -1 on error
 */
-int rxApplication(LinkLayer linkStruct) {
+int rxApplication(LinkLayer linkStruct, const char* filename) {
     // Open the connection
     if (llopen(linkStruct) != 1) {
         printf("%s: An error occurred inside llopen.\n", __func__);
         return -1;
     }
 
-    //printf("RX is connected up successfully\n"); // TODO: Remove (DEBUG)
-
     // Read the start control packet
     unsigned char* controlPacket = (unsigned char*)malloc(MAX_PAYLOAD_SIZE * sizeof(unsigned char));
     long fileSize;
-    unsigned char* fileName = (unsigned char*)malloc(sizeof(unsigned char)); //FIXME: Define a maximum size for filename. Also... Does this work? ** || *[]
-    if (readControlPacket(controlPacket, &fileSize, fileName, CSTART) != 0) { 
+    unsigned char* txFileName = (unsigned char*)malloc(sizeof(unsigned char));
+    if (readControlPacket(controlPacket, &fileSize, txFileName, CSTART) != 0) { 
         printf("%s: Error in readControlPacket.\n", __func__);
         return -1;
     }
+
+    printf("Tx is reading a file with name: %s\n", txFileName);
     
     // Create file
-    int fd = open(fileName, O_WRONLY | O_APPEND | O_CREAT, 777); // FIXME: Use filename
+    int fd = open(filename, O_WRONLY | O_APPEND | O_CREAT, 777); 
     if (fd < 0) {
         printf("Unable to open file.\n");
         return -1;
     }
 
     // Read data packets
-    if (readDataPacket(&fd, &fileSize, fileName) < 0) {
+    if (readDataPacket(&fd, &fileSize, txFileName) < 0) {
         printf("%s: Error while reading data packet.\n", __func__);
         return -1;
     }
 
     free(controlPacket);
-    //printf("After freeing controlPacket\n");
-
+    free(txFileName);
 
     // Close the connection
-    if (llclose(1) != 1){ // TODO: Change the argument
+    if (llclose(TRUE) != 1){ 
         printf("%s: An error ocurred inside llclose.\n", __func__);
         return -1;
     }
@@ -519,7 +494,7 @@ void applicationLayer(const char *serialPort, const char *role, int baudRate, in
             printf("%s, Error in txApplication.\n", __func__);
         }
     } else {
-        if (rxApplication((linkStruct)) == -1){
+        if (rxApplication((linkStruct), filename) == -1){
             printf("%s, Error in rxApplication.\n", __func__);
         }
     }

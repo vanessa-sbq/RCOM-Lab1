@@ -59,7 +59,7 @@ unsigned long totalNumOfFrames = 0;
 unsigned long totalNumOfValidFrames = 0;
 unsigned long totalNumOfInvalidFrames = 0;
 unsigned long totalNumOfDuplicateFrames = 0;
-unsigned long totalNumOfRetransmitions = 0;
+unsigned long totalNumOfRetransmissions = 0;
 unsigned long totalNumOfTimeouts = 0;
 
 
@@ -84,14 +84,14 @@ void alarmHandler(int signal) {
 int checkSUFrame(char controlField, int* ringringEnabled){
     state_t state = START;
     while (state != STOP_STATE && (*ringringEnabled)) {
-        //printf("DA BLUETOOS DEVICE IS LEADY TO PAIL\n"); // TODO: Remove (DEBUG)
-        char byte = 0;
+        unsigned char byte = 0;
         int rb = 0;
-        if ((rb = readByte(&byte)) == -1) return -1;
+        if ((rb = readByte(&byte)) == -1) {
+            printf("%s: An error occurred inside readByte.\n", __func__);
+            return -1;
+        }
         if (rb == 0) continue;
-
-        if (byte != 0x00) printf("byte: %.8x\n", byte);
-        char BCC1 = 0x00;
+        unsigned char BCC1 = 0x00;
 
         switch (state) {
             case START:
@@ -111,7 +111,6 @@ int checkSUFrame(char controlField, int* ringringEnabled){
                 state = byte == FLAG ? STOP_STATE : START;
                 break;
             case STOP_STATE:
-                printf("SET read successfully\n");
                 break;
             default:
                 state = START;
@@ -132,7 +131,10 @@ int checkSUFrame(char controlField, int* ringringEnabled){
  *        -1 on error
 */
 int llopen(LinkLayer connectionParameters) {
-    signal(SIGALRM, alarmHandler);
+    if (signal(SIGALRM, alarmHandler) == SIG_ERR) {
+        printf("%s: An error occurred inside signal.\n", __func__);
+        return -1;
+    }
     numberOfRetransmitions = connectionParameters.nRetransmissions;
     timeout = connectionParameters.timeout;
     role = connectionParameters.role;
@@ -146,38 +148,36 @@ int llopen(LinkLayer connectionParameters) {
             int bytesWritten = 0;
             if (alarmEnabled == FALSE){
                 // Assemble SET frame
-                char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
-                char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
+                unsigned char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_SET;
+                unsigned char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_SET, BCC1, FLAG};
 
                 // Send SET frame
                 bytesWritten = writeBytes(set_array, 5);
-
                 if (bytesWritten == -1) {
                     printf("%s: Error in writeBytes.\n", __func__);
                     return -1;
                 }
 
                 alarm(timeout); // Set alarm to be triggered after timeout
-                alarmEnabled = TRUE;
-                
-                printf("TX just wrote\n"); // TODO: Remove (DEBUG)
+                alarmEnabled = TRUE;                
             }
 
             if (bytesWritten == 5) {
                 alarm(timeout); // Set alarm to be triggered after timeout
                 alarmEnabled = TRUE;
-                //sleep(1);
                 int csu = checkSUFrame(CONTROL_UA, &alarmEnabled);
-                if (csu == -1) return -1;
+                if (csu == -1) {
+                    printf("%s: An error occoures inside checkSUFrame.\n", __func__);
+                    return -1;   
+                }
                 else if (alarmEnabled){
-                    printf("HERE ALO ALO AQUI AQUI\n"); // TODO: Remove (DEBUG)
                     alarm(0);
                     alarmEnabled = FALSE;
                     alarmCount = 0;
                     return 1;   
                 } 
             }
-            totalNumOfRetransmitions++;
+            totalNumOfRetransmissions++;
         }
     } else if (role == LlRx) { // Receiver
         int enterCheckSUFrame = TRUE;
@@ -190,17 +190,18 @@ int llopen(LinkLayer connectionParameters) {
             }
 
             int BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_UA;
-            char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_UA, BCC1, FLAG};
+            unsigned char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_UA, BCC1, FLAG};
 
             int wb = writeBytes(ua_array, 5);
-
             if (wb == -1) {
                 printf("%s: An error occurred inside writeBytes.\n", __func__);
                 return -1;
             } 
             else if (wb == 5) return 1;
-            else continue;
-            totalNumOfRetransmitions++; // TODO: Should this be here?
+            else { 
+                totalNumOfRetransmissions++; 
+                continue;
+            }
         }
     }
     return -1;
@@ -216,11 +217,9 @@ int llopen(LinkLayer connectionParameters) {
  *        -1 on error
 */
 int readIFrameResponse() {
-    printf("NOW READING IFRAMERESPOSNE %d\n", alarmEnabled); // TODO: Remove (DEBUG)
-
     state_t state = START;
-    char BCC1 = 0x00;
-    char byte;
+    unsigned char BCC1 = 0x00;
+    unsigned char byte;
     int isInvalid = 0;
 
     while (state != STOP_STATE && alarmEnabled) {
@@ -237,25 +236,21 @@ int readIFrameResponse() {
             case A_RCV:
                 switch (byte) {
                     case CONTROL_RR0:
-                        printf("Received RR0\n");
                         totalNumOfValidFrames++;
                         state = C_RCV;
                         CFieldToSendNext = 0;
                         break;
                     case CONTROL_RR1:
-                        printf("Received RR1\n");
                         totalNumOfValidFrames++;
                         state = C_RCV;
                         CFieldToSendNext = 1;
                         break;
                     case CONTROL_REJ0:
-                        printf("Received REJ0\n");
                         totalNumOfInvalidFrames++;
                         isInvalid = 1;
                         state = C_RCV;
                         break;
                     case CONTROL_REJ1:
-                        printf("Received REJ1\n");
                         totalNumOfInvalidFrames++;
                         isInvalid = 1;
                         state = C_RCV;
@@ -270,23 +265,18 @@ int readIFrameResponse() {
                 BCC1 = ADDRESS_SENT_BY_TX ^ byte;
                 break;
             case C_RCV:
-                //printf("NOW IN CRCV\n"); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
-                //printf("NOW IN BCCOK WITH BYTE BEING %x\n", byte); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? STOP_STATE : START;
                 break;
             case STOP_STATE:
-                //printf("STOP_STATE\n"); // TODO: Remove (DEBUG)
                 break;
             default:
                 state = START;
                 break;
         }
     }
-
-    printf("Now exiting readIFrameResponse %d\n", alarmEnabled);
     return isInvalid;
 }
 
@@ -304,21 +294,18 @@ int llwrite(const unsigned char *buf, int bufSize) {
     int numBytesStuffed = 0;
     for (int i = 0; i < bufSize; i++) { // Get the new frame size for byte stuffing
         if (buf[i] == FLAG || buf[i] == ESCAPE_OCTET) {
-            printf("FOUND A FLAG INSIDE DATA\n");
             numBytesStuffed++;
             newFrameSize++;
         }
     }
 
-    char* frame = (char*)malloc(sizeof(char) * (newFrameSize));
+    unsigned char* frame = (unsigned char*)malloc(sizeof(unsigned char) * (newFrameSize));
 
     frame[0] = FLAG; 
     frame[1] = ADDRESS_SENT_BY_TX;
 
     if (CFieldToSendNext) frame[2] = 0x80; // Send frame 1 next
     else frame[2] = 0x00; // Send frame 0 next
-    //if (!controlType) frame[2] = 0x00;
-    //else frame[2] = 0x80;
     
     frame[3] = frame[1] ^ frame[2];
 
@@ -335,27 +322,14 @@ int llwrite(const unsigned char *buf, int bufSize) {
         j++;
     }
 
-    printf("\n DEBUG: Now doing byte stuffing part. -> Before: "); // TODO: Remove (DEBUG)
-    for (int i = 0; i < bufSize; i++) {
-        printf("%x ", buf[i]);
-    }
-
-    printf("\n After Byte Stuffing: "); // TODO: Remove (DEBUG)
-    for (int i = 0; i < newFrameSize; i++) {
-        printf("%.2x ", frame[i]);
-    }
-
-    printf("\n"); // TODO: Remove (DEBUG)
-
-    char BCC2 = buf[0];
+    unsigned char BCC2 = buf[0];
     for (int j = 1; j < bufSize; j++) {
         BCC2 ^= buf[j]; 
     }
 
     // BCC2 byte stuffing
     if (BCC2 == FLAG || BCC2 == ESCAPE_OCTET) {
-        printf("OH NO, BCC2 is a flag, how sad :(\n");
-        frame = (char*)realloc(frame, newFrameSize + sizeof(char) * 2);
+        frame = (unsigned char*)realloc(frame, newFrameSize + sizeof(unsigned char) * 2);
         newFrameSize++;
         frame[newFrameSize - 3] = ESCAPE_OCTET;
         frame[newFrameSize - 2] = BCC2 ^ ESCAPE_XOR;
@@ -367,32 +341,25 @@ int llwrite(const unsigned char *buf, int bufSize) {
     frame[newFrameSize - 1] = FLAG;    
 
     int wb = 0;
-
     
-    signal(SIGALRM, alarmHandler);
+    if (signal(SIGALRM, alarmHandler) == SIG_ERR) {
+        printf("%s: An error occurred inside signal.\n", __func__);
+        return -1;
+    }
     alarm(0);
 
     alarmCount = 0;
     alarmEnabled = FALSE;
 
-    /* 
-        previousCFieldToSendNext;
-
-        must compare the two. If they are the same then the packet was not sent correctly
-
-
-    */
-
     int previousCFieldToSendNext = CFieldToSendNext;
 
-    while (alarmCount < numberOfRetransmitions) {  // TODO: Change condition
+    while (alarmCount < numberOfRetransmitions) { 
         if (alarmEnabled == FALSE){
-            printf("TX IS WRITING\n");
             int bytesWritten = writeBytes(frame, newFrameSize);
             totalNumOfFrames++;
-            
 
-            if (wb == -1) {
+            if (bytesWritten == -1) {
+                printf("%s: An error occurred inside writeBytes.\n", __func__);
                 return -1;
             } else {
                 int response = 0;
@@ -404,7 +371,6 @@ int llwrite(const unsigned char *buf, int bufSize) {
                 }
                 if (response == 0 && (previousCFieldToSendNext != CFieldToSendNext)) {
                     alarm(0);
-                    printf("Response was read.\n");
                     wb = bytesWritten - 6 - numBytesStuffed;
                     alarmEnabled = FALSE;
                     alarmCount = 0;
@@ -412,9 +378,8 @@ int llwrite(const unsigned char *buf, int bufSize) {
                 }
             }
 
-            totalNumOfRetransmitions++;
+            totalNumOfRetransmissions++;
         }
-        //sleep(1); // Guarantee that all bytes were written. // TODO: Remove
     }
 
     free(frame);
@@ -434,13 +399,11 @@ int llwrite(const unsigned char *buf, int bufSize) {
  * 
  * returns void
  * 
-*/
-void sendAck(char receivedCField) {
-    printf("Expected: %x, actual: %x \n", prevCField, receivedCField);
-
-    char prevCFieldChar = prevCField ? I_FRAME_1 : I_FRAME_0; // If previous C Field is 1, then previous C Field Char is I_FRAME_1 (0x80).
-    char RR = 0x00;
-    if (receivedCField == prevCFieldChar){
+**/
+void sendAck(unsigned char receivedCField) {
+    unsigned char prevCFieldChar = prevCField ? I_FRAME_1 : I_FRAME_0; // If previous C Field is 1, then previous C Field Char is I_FRAME_1 (0x80).
+    unsigned char RR = 0x00;
+    if (receivedCField == prevCFieldChar){ // Frame is duplicate
         RR = prevCField ? CONTROL_RR0 : CONTROL_RR1;
     }
     else {
@@ -455,11 +418,13 @@ void sendAck(char receivedCField) {
     }
 
     // Conditions
-    char BCC1 = RR ^ ADDRESS_SENT_BY_TX;
+    unsigned char BCC1 = RR ^ ADDRESS_SENT_BY_TX;
 
     // Send ACK
-    char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, RR, BCC1, FLAG};
-    writeBytes(ua_array, 5);  // TODO: Check errors
+    unsigned char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, RR, BCC1, FLAG};
+    if (writeBytes(ua_array, 5) == -1) {
+        printf("%s: An error occurred in writeBytes\n", __func__);
+    } 
 }
 
 /**
@@ -467,73 +432,73 @@ void sendAck(char receivedCField) {
  * packet - buffer to read the frame data into
  * returns number of data bytes read on success
  *        -1 on error
-*/
+**/
 int llread(unsigned char *packet) {
-    if (packet == NULL) return -1;
+    if (packet == NULL) {
+        printf("%s: An error occurred, packet is NULL\n", __func__);
+        return -1;
+    }
 
     int state = START;
-    char* dataFrame = (char *)malloc(sizeof(char)); // The data from the information frame will be stored here.
+    unsigned char* dataFrame = (unsigned char *)malloc(sizeof(unsigned char)); // The data from the information frame will be stored here.
     int currentDataFrameIt = 0;
-    char receivedCField = 0x00;
+    unsigned char receivedCField = 0x00;
 
     while (state != STOP_STATE) {
-        char byte = 0;
+        unsigned char byte = 0;
         int rb = 0;
-        if ((rb = readByte(&byte)) == -1) return -1;
+        if ((rb = readByte(&byte)) == -1) {
+            printf("%s: An error occurred in readByte.\n", __func__);
+            return -1;
+        }
         if (rb == 0) continue;
 
-        char BCC1 = 0x00; 
+        unsigned char BCC1 = 0x00; 
     
         switch (state) {
             case START:
-                //printf("HERE START\n"); // TODO: Remove (DEBUG)
                 if (byte == FLAG) state = FLAG_RCV;
                 break;
             case FLAG_RCV:
-                //printf("HERE IN FLAG_RCV\n"); // TODO: Remove (DEBUG)
                 state = byte == FLAG ? FLAG_RCV : (byte == ADDRESS_SENT_BY_TX ? A_RCV : START);
                 break;
             case A_RCV:
-                //printf("HERE IN ARCV\n"); // TODO: Remove (DEBUG)
                 receivedCField = byte;
-                printf("Received C Field: %x\n", receivedCField); // TODO: Remove (DEBUG)
                 if (byte == FLAG) state = FLAG_RCV;
                 else if ((byte == I_FRAME_0) || (byte == I_FRAME_1)) state = C_RCV;
                 else state = START;
                 break;
             case C_RCV:
-                //printf("HERE IN CRCV\n"); // TODO: Remove (DEBUG)
                 BCC1 = ADDRESS_SENT_BY_TX ^ receivedCField;
                 state = byte == FLAG ? FLAG_RCV : (byte == BCC1 ? BCC_OK : START);
                 break;
             case BCC_OK:
-                //printf("HERE IN BCCOK\n"); // TODO: Remove (DEBUG)
                 dataFrame[currentDataFrameIt] = byte;
                 currentDataFrameIt++;
-                dataFrame = (char*)realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(char));
+                dataFrame = (unsigned char*)realloc(dataFrame, (currentDataFrameIt + 1) * sizeof(unsigned char));
 
-                if (dataFrame == NULL) return -1;
+                if (dataFrame == NULL) {
+                    printf("%s: An error occurred while doing realloc, dataFrame is NULL.\n", __func__);
+                    return -1;
+                }
 
-                // When byte is equal to flag -> Stop
+                // When byte is equal to flag -> Stop reading data and go check the data we received.
                 if (byte == FLAG){
-                    printf("FOUND FLAG FOUND FLAGGGGGGG\n"); // TODO: Remove (DEBUG)
                     state = CHECK_DATA;
-                } 
-
-                
+                }   
         }
 
         if (state == CHECK_DATA) {
             int data_bcc2_flag_size = currentDataFrameIt;
-            char* actualData = (char*)malloc(sizeof(char));
+            unsigned char* actualData = (unsigned char*)malloc(sizeof(unsigned char));
             int actualDataIt = 0;
             int sizeOfActualData = 1;
             int expectDestuffing = FALSE;
-            for (int i = 0; i < (data_bcc2_flag_size - 1); i++) { // Byte destuffing // TODO: Change -2 to -1, after BCC2 stuffing
+            for (int i = 0; i < (data_bcc2_flag_size - 1); i++) { // Byte destuffing
 
                 if (actualDataIt != 0) {
                     sizeOfActualData++;
-                    actualData = (char*)realloc(actualData, sizeOfActualData * sizeof(char));
+                    actualData = (unsigned char*)realloc(actualData, sizeOfActualData * sizeof(unsigned char));
                 }
 
                 if (dataFrame[i] != ESCAPE_OCTET) {
@@ -551,49 +516,48 @@ int llread(unsigned char *packet) {
                     actualDataIt++;
                 }
 
-               // 1 - We have a byte that is the escape octet
-               // 2 - We have a byte that is not the escape octet
             }
 
             // Check BCC2
-            char dataAccm = 0x00;
+            unsigned char dataAccm = 0x00;
 
             for (int i = 0; i < sizeOfActualData-1; i++) {
                 dataAccm ^= actualData[i];  // EXOR all the destuffed data bytes
             }
 
             // Case - XOR is invalid or the data is too big (Reject)
-            printf("sizeOFActualdata: %d\n", sizeOfActualData);
             if (dataAccm != actualData[actualDataIt-1] || (sizeOfActualData-1) > MAX_PAYLOAD_SIZE) { // If dataAccm is not the same as BCC2, something went wrong
-                printf("XOR INVALID, EXPECTED %.2x BUT GOT %.2x.\n", actualData[actualDataIt-1], dataAccm); // TODO: Remove (DEBUG)
 
-                char REJ = 0x00;
+                unsigned char REJ = 0x00;
                 if (prevCField == 0) REJ = CONTROL_REJ0;
                 else REJ = CONTROL_REJ1;
 
-                char BCC1 = REJ ^ ADDRESS_SENT_BY_TX; 
+                unsigned char BCC1 = REJ ^ ADDRESS_SENT_BY_TX; 
 
                 // SEND NACK
-                char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, REJ, BCC1, FLAG};
-                writeBytes(ua_array, 5); // TODO: Check errors
+                unsigned char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, REJ, BCC1, FLAG};
+                if (writeBytes(ua_array, 5) == -1){
+                    printf("%s: An error occurred in writeBytes\n", __func__);
+                    return -1;
+                }
                 state = START;
 
-                // TODO: Clean allocated space
+                // Clean allocated space
                 free(dataFrame);
                 dataAccm = 0;
                 currentDataFrameIt = 0;
-                dataFrame = (char *)malloc(sizeof(char)); // The data from the information frame will be stored here.
+                dataFrame = (unsigned char *)malloc(sizeof(unsigned char)); // The data from the information frame will be stored here.
                 
                 free(actualData);
-                actualData = (char*)malloc(sizeof(char));
+                actualData = (unsigned char*)malloc(sizeof(unsigned char));
                 actualDataIt = 0;
                 sizeOfActualData = 1;
                 totalNumOfFrames++;
                 totalNumOfInvalidFrames++;
             } else { 
+                unsigned char prevCFieldChar = prevCField ? I_FRAME_1 : I_FRAME_0;
                 // Case - Frame is a duplicate (Accept and discard)
-                if (prevCField == receivedCField){
-                    printf("Frame is duplicate\n");
+                if (prevCFieldChar == receivedCField){
                     sendAck(receivedCField); 
                     free(dataFrame);
                     free(actualData);
@@ -604,28 +568,26 @@ int llread(unsigned char *packet) {
 
                 // Case - Frame accepted (Accept)
                 for (int i = 0; i < sizeOfActualData; i++) {
-                    //printf("Bytes are %.2x\n",(unsigned char)actualData[i] ); // TODO: Remove (DEBUG)
-                    //if (i > 3) printf("%.2x ",(unsigned char)actualData[i] ); // TODO: Remove (DEBUG)
                     packet[i] = (unsigned char)actualData[i]; 
                 }
+
                 sendAck(receivedCField); 
-                printf("Frame accepted\n");
                 totalNumOfFrames++;
                 totalNumOfValidFrames++;
                 return sizeOfActualData;
             }
-            // 3 - Reads same frame again (prevCField + discard frame)
         }
     }
 
+    printf("%s: An error occurred.\n", __func__);
     return -1;
 }
 
 ////////////////////////////////////////////////
 // LLCLOSE
 ////////////////////////////////////////////////
-int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
-    printf("Statistics:\n");
+int llclose(int showStatistics) {
+    if (showStatistics) printf("Statistics:\n");
     if (role == LlTx) { // Transmitter
         while (alarmCount < numberOfRetransmitions) {
             int bytesWritten = 0;
@@ -636,55 +598,68 @@ int llclose(int showStatistics) { // FIXME: What to do with showStatistics??
 
                 // Assemble DISC frame
                 int array_size = 5;
-                char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_DISC;
-                char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_DISC, BCC1, FLAG};
+                unsigned char BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_DISC;
+                unsigned char set_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_DISC, BCC1, FLAG};
 
                 // Send DISC frame
-                while (bytesWritten != 5) { // FIXME: Remove hard-coded value?
-                    bytesWritten = writeBytes((set_array + sizeof(char) * bytesWritten), array_size - bytesWritten);
+                while (bytesWritten != 5) {
+                    bytesWritten = writeBytes((set_array + sizeof(unsigned char) * bytesWritten), array_size - bytesWritten);
                     if (bytesWritten == -1) {
+                        printf("%s: An error occurred inside writeBytes.\n", __func__);
                         return -1;
                     }
                 }
-                //sleep(1); // Wait until all bytes have been written to the serial port // TODO: Remove
             }
 
-            if (bytesWritten == 5) { //FIXME: DISABLE ALARM
+            if (bytesWritten == 5) { 
+                alarm(0);
+                alarmEnabled = FALSE;
                 int csu = checkSUFrame(CONTROL_DISC, &alarmEnabled);
-                if (csu == -1) return -1;
+                if (csu == -1) {
+                    printf("%s: An error occurred inside checkSUFrame.\n", __func__);
+                    return -1;
+                }
                 else break;   
             }
-            totalNumOfRetransmitions++;
+            totalNumOfRetransmissions++;
         }
-        printf("Number of dropped packets (TX): %ld\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)));
+        if (showStatistics) printf("Number of dropped packets (TX): %d\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)));
     } else if (role == LlRx) { // Receiver
-        printf("RX entered llclose()\n");
         int enterCheckSUFrame = TRUE;
         while (enterCheckSUFrame) {
 
             int csu = checkSUFrame(CONTROL_DISC, &enterCheckSUFrame);
             if (csu == -1) {
+                printf("%s: An error occurred inside checkSUFrame.\n", __func__);
                 return -1;
             }
 
             int BCC1 = ADDRESS_SENT_BY_TX ^ CONTROL_DISC;
-            char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_DISC, BCC1, FLAG};
+            unsigned char ua_array[5] = {FLAG, ADDRESS_SENT_BY_TX, CONTROL_DISC, BCC1, FLAG};
 
             int wb = writeBytes(ua_array, 5);
 
-            if (wb == -1) return -1;
+            if (wb == -1) {
+                printf("%s: An error occurred inside writeBytes.\n", __func__);
+                return -1;
+            }
             else if (wb == 5) {
-                printf("Number of dropped packets (RX): %ld\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)) - ((int)(totalNumOfDuplicateFrames)));
-                printf("Number of frames received that were duplicate: %ld\n", totalNumOfDuplicateFrames);
+                if (showStatistics){
+                    printf("Number of dropped packets (RX): %d\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)) - ((int)(totalNumOfDuplicateFrames)));
+                    printf("Number of frames received that were duplicate: %ld\n", totalNumOfDuplicateFrames);
+                }
                 break;
             }
             else continue;
         }
     }    
    
-    printf("Number of frames that were sent/received and are valid: %ld\n", totalNumOfValidFrames);
-    printf("Number of frames that were sent/recevived and are invalid: %ld\n", totalNumOfInvalidFrames);
-    printf("Total number of frames that were sent/received: %ld\n", totalNumOfFrames);
+    if (showStatistics){
+        printf("Number of frames that were sent/received and are valid: %ld\n", totalNumOfValidFrames);
+        printf("Number of frames that were sent/received and are invalid: %ld\n", totalNumOfInvalidFrames);
+        printf("Total number of frames that were sent/received: %ld\n", totalNumOfFrames);
+        printf("Total number of frames that were retransmitted: %ld\n", totalNumOfRetransmissions);
+    }
 
     if (closeSerialPort() == -1){
         printf("%s: Error while closing serial port\n", __func__);
