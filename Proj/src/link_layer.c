@@ -70,6 +70,7 @@ int alarmCount = 0;
 void alarmHandler(int signal) {
     alarmEnabled = FALSE;
     alarmCount++;
+    totalNumOfTimeouts++;
     printf("Alarm #%d\n", alarmCount);
 }
 
@@ -369,6 +370,13 @@ int llwrite(const unsigned char *buf, int bufSize) {
                     printf("%s: An error occured in readIFrameResponse.\n", __func__);
                     return -1;
                 }
+
+                if (response == 1) { // REJ 
+                    alarm(0);
+                    alarmEnabled = FALSE;
+                    alarmCount = 0;
+                }
+
                 if (response == 0 && (previousCFieldToSendNext != CFieldToSendNext)) {
                     alarm(0);
                     wb = bytesWritten - 6 - numBytesStuffed;
@@ -623,7 +631,11 @@ int llclose(int showStatistics) {
             }
             totalNumOfRetransmissions++;
         }
-        if (showStatistics) printf("Number of dropped packets (TX): %d\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)));
+        if (showStatistics) { 
+            printf("Number of dropped packets (TX): %d\n", ((int)totalNumOfFrames) - ((int)(totalNumOfValidFrames)) - ((int)(totalNumOfInvalidFrames)));
+            printf("Total number of frames that were retransmitted: %ld\n", totalNumOfRetransmissions);
+            printf("Total number of timeouts: %ld\n", totalNumOfTimeouts);
+        }
     } else if (role == LlRx) { // Receiver
         int enterCheckSUFrame = TRUE;
         while (enterCheckSUFrame) {
@@ -658,7 +670,6 @@ int llclose(int showStatistics) {
         printf("Number of frames that were sent/received and are valid: %ld\n", totalNumOfValidFrames);
         printf("Number of frames that were sent/received and are invalid: %ld\n", totalNumOfInvalidFrames);
         printf("Total number of frames that were sent/received: %ld\n", totalNumOfFrames);
-        printf("Total number of frames that were retransmitted: %ld\n", totalNumOfRetransmissions);
     }
 
     if (closeSerialPort() == -1){
