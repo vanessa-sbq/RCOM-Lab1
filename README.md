@@ -1,6 +1,6 @@
 # Issues with the protocol that was presented
 
-Like the report mentioned we found some errors that made us realise some issues with the protocol. These are presented below:
+As mentioned in the report, we identified several errors that revealed issues with the protocol.
 
 ## Distorted Penguin
 
