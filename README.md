@@ -11,9 +11,25 @@ This can lead to a situation where the receiver mistakenly believes the data is 
 
 ### The original file
 
+![Penguin](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/penguin.gif?raw=true)
+
 ### The file that was received
 
+![Distorted-Penguin](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/distorted-penguin.gif?raw=true)
+
 ### The bytes that were changed
+
+![Diff1](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/diff1.png?raw=true)
+
+![Diff2](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/diff2.png?raw=true)
+
+![Diff3](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/diff3.png?raw=true)
+
+Received file has the following bytes altered: 0xe0, 0xc0, 0x30, 0x00, 0xf7, 0xd3, 0x13, 0x2d, 0x86, 0x41
+
+Original file has the following bytes in the place where they were altered: 0xe8, 0x80, 0x38, 0x40, 0xd7, 0xdb, 0x17, 0x29, 0xa6, 0x49
+
+Calculating the XOR of the changed bytes we can see that in both sides the value is 0xCD.
 
 ## Concord with distorted colors
 
@@ -25,6 +41,28 @@ the frame might appear incomplete or malformed to the receiver.
 
 ### The original file
 
+![Concorde](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde.jpg?raw=true)
+
 ### The file that was received
 
-### What we changed
+![ConcordeFunnyColors](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde-error-bcc2.jpg?raw=true)
+
+### What we changed to fix this issue
+
+To fix this issue we did Byte Stuffing of the BCC2 byte.
+
+```c
+// BCC2 byte stuffing
+if (BCC2 == FLAG || BCC2 == ESCAPE_OCTET) {
+    frame = (unsigned char*)realloc(frame, newFrameSize + sizeof(unsigned char) * 2);
+    newFrameSize++;
+    frame[newFrameSize - 3] = ESCAPE_OCTET;
+    frame[newFrameSize - 2] = BCC2 ^ ESCAPE_XOR;
+    numBytesStuffed++;
+} else {
+    frame[newFrameSize - 2] = BCC2;
+}
+```
+### After doing this we got an error free concorde.
+
+![Received-Concorde](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde-error-bcc2.jpg?raw=true)
