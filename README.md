@@ -31,7 +31,7 @@ Original file has the following bytes in the place where they were altered: 0xe8
 
 Calculating the XOR of the changed bytes we can see that in both sides the value is 0xCD.
 
-## Concord with distorted colors
+## Concorde with distorted colors
 
 The need to byte-stuff the BCC2 arises from a special scenario in data transmission:
 if the BCC2 checksum byte happens to be the same as a FLAG byte (or any other reserved special byte, like ESCAPE_OCTET),
@@ -41,11 +41,11 @@ the frame might appear incomplete or malformed to the receiver.
 
 ### The original file
 
-![Concorde](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde.jpg?raw=true)
+![Concorde](https://github.com/vanessa-sbq/RCOM-Lab/blob/0f193779be40ee984dfb7a18bf598e83337528e2/Assets/Proj1/concorde.jpg?raw=true)
 
 ### The file that was received
 
-![ConcordeFunnyColors](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde-error-bcc2.jpg?raw=true)
+![ConcordeFunnyColors](https://github.com/vanessa-sbq/RCOM-Lab/blob/0f193779be40ee984dfb7a18bf598e83337528e2/Assets/Proj1/concorde-error-bcc2.jpg?raw=true)
 
 ### What we changed to fix this issue
 
@@ -65,4 +65,4 @@ if (BCC2 == FLAG || BCC2 == ESCAPE_OCTET) {
 ```
 ### After doing this we got an error free concorde.
 
-![Received-Concorde](https://github.com/vanessa-sbq/RCOM-Lab/blob/8b67086b9cbf403ee0e47b0ebd112a5b8b2f0bc3/Assets/Proj1/concorde-error-bcc2.jpg?raw=true)
+![Diff4](https://github.com/vanessa-sbq/RCOM-Lab/blob/0f193779be40ee984dfb7a18bf598e83337528e2/Assets/Proj1/concorde-diff.png?raw=true)
